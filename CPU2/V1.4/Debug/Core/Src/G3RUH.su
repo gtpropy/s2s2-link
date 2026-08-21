@@ -1,0 +1,12 @@
+../Core/Src/G3RUH.c:94:6:AX25_txInitCfg	4	static
+../Core/Src/G3RUH.c:106:9:NRZI_encoding	24	static
+../Core/Src/G3RUH.c:124:9:CHECK_BIT_STUFFING	16	static
+../Core/Src/G3RUH.c:148:6:process_txBit	24	static
+../Core/Src/G3RUH.c:166:9:Prepare_NextBit_To_Send	24	static
+../Core/Src/G3RUH.c:255:10:CRC_CALC	24	static
+../Core/Src/G3RUH.c:269:10:Build_G3RUH_TX_Frame	32	static
+../Core/Src/G3RUH.c:331:6:INITIALIZE_RX_PARAMETERS	4	static
+../Core/Src/G3RUH.c:355:6:Update_CRC	16	static
+../Core/Src/G3RUH.c:360:9:Process_RX_Bit	24	static
+../Core/Src/G3RUH.c:472:6:G3RUH_Process_Received_Bytes	32	static
+../Core/Src/G3RUH.c:523:6:CAPTURE_PC_COMMAND	16	static

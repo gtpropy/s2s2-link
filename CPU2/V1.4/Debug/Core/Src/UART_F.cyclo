@@ -1,0 +1,16 @@
+../Core/Src/UART_F.c:294:13:uart1_send	1
+../Core/Src/UART_F.c:302:13:uart2_send	1
+../Core/Src/UART_F.c:314:6:Serial_print	1
+../Core/Src/UART_F.c:326:6:Serial_println	1
+../Core/Src/UART_F.c:339:6:Serial2_print	1
+../Core/Src/UART_F.c:351:6:Serial2_println	1
+../Core/Src/UART_F.c:368:6:Serial_write	1
+../Core/Src/UART_F.c:376:6:Serial2_write	1
+../Core/Src/UART_F.c:388:6:Serial_begin	1
+../Core/Src/UART_F.c:397:6:Serial2_begin	1
+../Core/Src/UART_F.c:410:6:HAL_UART_RxCpltCallback	5
+../Core/Src/UART_F.c:453:6:HAL_UART_ErrorCallback	3
+../Core/Src/UART_F.c:478:5:Serial2_available	2
+../Core/Src/UART_F.c:488:5:Serial2_read	2
+../Core/Src/UART_F.c:502:5:Serial_available	2
+../Core/Src/UART_F.c:512:5:Serial_read	2
