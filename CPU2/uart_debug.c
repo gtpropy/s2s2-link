@@ -98,22 +98,28 @@
  * CLOCK / BAUD CONFIGURATION
  * ==========================================================================
  *
- * Assumption:
+ * Assumption: LPUART1 kernel clock = 48 MHz.
  *
- *   LPUART1 kernel clock = 48 MHz
- *   Baud rate            = 115200
+ * LPUART BRR = 256 * fck / baud
  *
- * LPUART BRR:
- *
- *   BRR = 256 * fck / baud
- *
- *   = 256 * 48,000,000 / 115,200
- *   ≈ 106667
+ *   115200: 256 * 48,000,000 / 115,200   ≈ 106667  (default -- matches the
+ *           architecture README's documented serial monitor setting)
+ *     9600: 256 * 48,000,000 /   9,600   = 1280000  (define UART_DEBUG_BAUD_9600
+ *           at build time, e.g. `make CFLAGS+=-DUART_DEBUG_BAUD_9600`, to use
+ *           this instead -- the host GUI's baud selection must match whichever
+ *           one is actually flashed)
  *
  * ==========================================================================
  */
 
 #define LPUART1_BRR_48MHZ_115200  106667UL
+#define LPUART1_BRR_48MHZ_9600    1280000UL
+
+#ifdef UART_DEBUG_BAUD_9600
+#define LPUART1_BRR_VALUE  LPUART1_BRR_48MHZ_9600
+#else
+#define LPUART1_BRR_VALUE  LPUART1_BRR_48MHZ_115200
+#endif
 
 
 /*
@@ -217,7 +223,7 @@ void uart2_init(void)
    * ----------------------------------------------------------
    */
 
-  LPUART1_BRR = LPUART1_BRR_48MHZ_115200;
+  LPUART1_BRR = LPUART1_BRR_VALUE;
 
 
   /*

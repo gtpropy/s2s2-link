@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "s2s2com.h"
+#include "s2s2_commands.h"
+#include "cubus_ax25.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -30,38 +34,58 @@ extern "C" {
 
 /*
  * ============================================================
- * DEFAULT AX.25 ADDRESS
+ * S2S2 PROTOCOL NODE IDS (cubus_proto src_id / dst_id)
  * ============================================================
  */
 
-#define DEFAULT_SOURCE_CALLSIGN       "NEPSAT"
-#define DEFAULT_SOURCE_SSID            1
+#define NODE_ID_GROUND                  0
+#define NODE_ID_SATELLITE                1
 
-#define DEFAULT_DEST_CALLSIGN         "GROUND"
-#define DEFAULT_DEST_SSID              0
+#define DEFAULT_SESSION_ID             0x0001U
 
 /*
  * ============================================================
- * GFSK / G3RUH
+ * GMSK RADIO PARAMETERS
+ *
+ * The SX126x has no dedicated "GMSK mode" - GMSK is realized on the
+ * same FSK modem as a special case: modulation index h = 0.5 (Fdev =
+ * bitrate/4) with a tighter Gaussian pulse-shaping filter (BT = 0.3)
+ * than plain GFSK (which typically uses h = 1.0, BT = 0.5). See
+ * s2s2com.h section 4 for the full radio configuration this mirrors.
  * ============================================================
  */
 
 #define RADIO_TX_POWER_DBM             22
 
 /*
- * Standard G3RUH data rate.
+ * DEBUG_BUILD-only bench-test TX power (dBm). At +22 dBm (max HP-PA
+ * output) and under ~30cm separation, almost any receiver front end
+ * saturates regardless of FEC strength -- this is an RF-level effect,
+ * not a protocol bug. The DEBUG_BUILD "POWER <dbm>" UART command
+ * (see ipcc_m0plus_main.c / gs_main.c) lets a bench session drop to
+ * this level; production builds have no runtime way to change TX
+ * power and always run at RADIO_TX_POWER_DBM.
+ */
+#ifdef DEBUG_BUILD
+#define BENCH_TX_POWER_DBM             2
+#endif
+
+/*
+ * Data rate (unchanged from the GFSK design).
  */
 #define RADIO_BIT_RATE_BPS             9600
 
 /*
- * Standard G3RUH 9600 baud frequency deviation (+/- 4.8 kHz).
+ * GMSK frequency deviation: Fdev = bitrate/4 for h = 0.5.
  */
-#define RADIO_FDEV_HZ                  4800
+#define RADIO_FDEV_HZ                  2400
 
 /*
- * SX126x GFSK bandwidth.
+ * SX126x RX bandwidth. Carson's rule: BW > bitrate + 2*Fdev + freq_error,
+ * i.e. > 9600 + 4800 = 14400 Hz minimum; 19500 Hz gives margin for
+ * frequency error while staying tight around the narrower GMSK spectrum.
  */
-#define RADIO_RX_BANDWIDTH_HZ         23400
+#define RADIO_RX_BANDWIDTH_HZ         19500
 
 /*
  * 128 bits = 16 bytes.
@@ -72,22 +96,33 @@ extern "C" {
 
 /*
  * ============================================================
- * PHYSICAL PACKET LENGTH
+ * AX.25/FX.25 LINK ADDRESSING
  *
- * The SX126x packet is deliberately fixed length.
+ * Real AX.25 UI-frame addresses (callsign + SSID), used by
+ * cubus_ax25_fragment()/cubus_ax25_accept_frame() (core/Inc/cubus_ax25.h)
+ * so any AX.25/FX.25-aware ground station (SatNOGS, gr-satellites,
+ * Direwolf) can receive S2S2 traffic without custom software.
  *
- * This is NOT an AX.25 requirement.
- * It is our radio transport configuration.
+ * NEPSAT/GROUND are placeholder callsigns carried over from the original
+ * AX.25 bench-test design doc (packet_format_AX.25.json) - swap in a
+ * real assigned amateur-radio callsign before any actual RF transmit;
+ * transmitting under an invalid callsign is a licensing violation, not
+ * just a config nit.
+ *
+ * FX.25 correlation tag 0x06 (fx25.h) is a *shortened* RS(255,223): 128
+ * real data bytes + 32 parity = 160-byte RS block + 8-byte tag = 168-byte
+ * frame, same t=16 correction strength as the unshortened code, but small
+ * enough to fit the SX126x's 255-byte native packet-engine buffer. Sent
+ * with the packet engine in fixed-length/CRC-off/whitening-off mode
+ * (radio_app.c) so the actual on-air bytes are real, standards-compliant
+ * AX.25/FX.25 -- no continuous raw-bitstream driver needed.
  * ============================================================
  */
 
-#define RADIO_FIXED_PACKET_LEN         200
-
-/*
- * Number of HDLC flags before actual frame.
- * 64 flags = 512 bits = 53 ms audio lock time at 9600 baud.
- */
-#define PROTOCOL_LEADING_FLAG_COUNT    64
+#define AX25_SATELLITE_CALLSIGN "NEPSAT"
+#define AX25_SATELLITE_SSID     1
+#define AX25_GROUND_CALLSIGN    "GROUND"
+#define AX25_GROUND_SSID        0
 
 /*
  * ============================================================
@@ -100,35 +135,20 @@ typedef struct
     uint32_t txFrequency;
     uint32_t rxFrequency;
 
-    const char *sourceCallsign;
-    uint8_t sourceSSID;
-
-    const char *destCallsign;
-    uint8_t destSSID;
-
-    bool isSatelliteMode;
+    uint8_t nodeId;      /* this node's own id: NODE_ID_SATELLITE or NODE_ID_GROUND */
+    uint8_t peerId;      /* the node on the other end of the link */
 
 } RadioConfig_t;
 
 /*
  * ============================================================
  * COMMANDS
+ *
+ * The standard command set (opcodes, subsystem IDs, mission/data IDs,
+ * ACK/NACK status codes) and the structured telemetry payload formats
+ * (Beacon 1/2, camera fragment) live in s2s2_commands.h.
  * ============================================================
  */
-
-typedef enum
-{
-    CMD_NONE          = 0x00,
-
-    CMD_REQUEST_BURST = 0x01,
-
-    CMD_ACK           = 0x02,
-
-    CMD_NACK          = 0x03,
-
-    CMD_HEARTBEAT     = 0x04
-
-} CommandOpcode_t;
 
 #ifdef __cplusplus
 }

@@ -723,7 +723,7 @@ static void RadioInit( RadioEvents_t *events )
     /* FIX: TX and RX must NOT share the same SX126x internal SRAM
        offset, or a stale TX buffer gets read back as if it were a
        fresh reception. Give them non-overlapping 128-byte regions
-       (matches AX25_MAX_FRAME_LEN in both main.c files). */
+       (matches the chip's 256B buffer split in radio_app.c). */
 
     SUBGRF_SetBufferBaseAddress(0x00, 0x80);
 

@@ -1,0 +1,9 @@
+*.o
+*.elf
+*.bin
+*.map
+*.list
+*.cyclo
+*.d
+*.su
+Debug/

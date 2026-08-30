@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "stm32wlxx_hal.h"
@@ -11,23 +12,28 @@
 
 #include "config.h"
 #include "radio_app.h"
-#include "protocol.h"
-#include "ax25.h"
-#include "g3ruh.h"
+#include "s2s2com.h"
+#include "s2s2_commands.h"
+#include "cubus_ax25.h"
+#include "tx_history.h"
 
 const RadioConfig_t SatelliteProfile = {
     .txFrequency = DEFAULT_TX_FREQUENCY_HZ,
     .rxFrequency = DEFAULT_RX_FREQUENCY_HZ,
-    .sourceCallsign = "NEPSAT",
-    .sourceSSID = 1,
-    .destCallsign = "GROUND",
-    .destSSID = 0,
-    .isSatelliteMode = true
+    .nodeId = NODE_ID_SATELLITE,
+    .peerId = NODE_ID_GROUND
+};
+
+static const cubus_ax25_link_t s_link = {
+    .dest = { .callsign = AX25_GROUND_CALLSIGN, .ssid = AX25_GROUND_SSID },
+    .src  = { .callsign = AX25_SATELLITE_CALLSIGN, .ssid = AX25_SATELLITE_SSID },
 };
 
 #define BURST_PACKET_COUNT  100
 #define BEACON_INTERVAL_MS  5000
 #define TX_TIMEOUT_MS       1000
+
+#define CMD_LINE_MAX 1400 /* "TX " + up to MAX_PAYLOAD_LEN (659) bytes hex-encoded (1318 chars) + margin */
 
 typedef enum {
     STATE_IDLE_RX = 0,
@@ -37,16 +43,20 @@ typedef enum {
 
 volatile AppState_t app_state = STATE_IDLE_RX;
 volatile uint8_t tx_busy = 0;
-volatile uint8_t rx_frame_buffer[AX25_MAX_FRAME_SIZE];
-volatile uint16_t rx_frame_size = 0;
+volatile uint8_t rx_chunk_buffer[FX25_FRAME_LEN];
+volatile uint16_t rx_chunk_size = 0;
 volatile uint8_t rx_done_flag = 0;
 volatile uint8_t rx_timeout_flag = 0;
 volatile uint8_t rx_error_flag = 0;
 
-static uint8_t last_tx_scrambled[AX25_MAX_FRAME_SIZE];
-static uint16_t last_tx_len = 0;
+static cubus_ax25_reassembler_t s_reassembler;
+static uint16_t s_tx_seq = 0;
 static uint32_t last_beacon_tick_ms = 0;
 static uint32_t last_burst_finish_time = 0;
+static tx_history_t s_tx_history;
+#ifdef DEBUG_BUILD
+static bool s_beacon_enabled = true;
+#endif
 
 /* Interrupt Status Callbacks */
 void OnTxDone(void) { tx_busy = 0; }
@@ -54,12 +64,15 @@ void OnTxTimeout(void) { uart2_puts("TX TIMEOUT ERROR\r\n"); tx_busy = 0; }
 void OnRxTimeout(void) { rx_timeout_flag = 1; }
 void OnRxError(void) { rx_error_flag = 1; }
 
+volatile int16_t rx_last_rssi = 0;
+volatile int8_t rx_last_snr = 0;
+
 void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr) {
-    (void)rssi;
-    (void)snr;
-    uint16_t copy_len = (size < AX25_MAX_FRAME_SIZE) ? size : AX25_MAX_FRAME_SIZE;
-    memcpy((void *)rx_frame_buffer, payload, copy_len);
-    rx_frame_size = copy_len;
+    rx_last_rssi = rssi;
+    rx_last_snr = snr;
+    uint16_t copy_len = (size < FX25_FRAME_LEN) ? size : FX25_FRAME_LEN;
+    memcpy((void *)rx_chunk_buffer, payload, copy_len);
+    rx_chunk_size = copy_len;
     rx_done_flag = 1;
 }
 
@@ -77,67 +90,36 @@ static void Print_Hex_Bytes(const uint8_t *buf, uint16_t len) {
     }
 }
 
-static void Print_Payload_ASCII(const uint8_t *buf, uint16_t start, uint16_t end) {
-    if (end <= start) {
+static void Print_Payload_ASCII(const uint8_t *buf, uint16_t len) {
+    if (len == 0) {
         uart2_puts(" Payload (text) : (none)\r\n");
         return;
     }
     char line[96];
-    uint16_t n = (uint16_t)(end - start);
     uint16_t max_chars = (uint16_t)(sizeof(line) - 24);
-    if (n > max_chars) n = max_chars;
+    uint16_t n = (len > max_chars) ? max_chars : len;
     uint16_t pos = 0;
     pos += (uint16_t)snprintf(&line[pos], sizeof(line) - pos, " Payload (text): \"");
     for (uint16_t i = 0; i < n; i++) {
-        uint8_t c = buf[start + i];
+        uint8_t c = buf[i];
         line[pos++] = (c >= 0x20 && c < 0x7F) ? (char)c : '.';
     }
     pos += (uint16_t)snprintf(&line[pos], sizeof(line) - pos, "\"\r\n");
     uart2_puts(line);
 }
 
-static bool Looks_Like_Stale_TX_Buffer(const uint8_t *buf, uint16_t len) {
-    if (last_tx_len == 0) return false;
-    uint16_t compare_len = (len < last_tx_len) ? len : last_tx_len;
-    if (compare_len < 8) return false;
-    return (memcmp(buf, last_tx_scrambled, compare_len) == 0);
-}
+extern volatile int16_t rx_last_rssi;
+extern volatile int8_t rx_last_snr;
 
-static void Print_AX25_Fields(const char *label, const uint8_t *buf, uint16_t len) {
-    char line[112];
-    snprintf(line, sizeof(line), " --- %s field breakdown (%u bytes) ---\r\n", label, len);
-    uart2_puts(line);
-    if (len < 20) {
-        uart2_puts(" (too short for a full AX.25 header+FCS - skipping field breakdown)\r\n");
-        return;
-    }
-    snprintf(line, sizeof(line), " Start Flag : %02X %s\r\n", buf[0], (buf[0] == AX25_FLAG) ? "(OK)" : "(MISMATCH)");
-    uart2_puts(line);
-    char dest_cs[7], src_cs[7];
-    AX25_DecodeAddress(&buf[1], dest_cs);
-    snprintf(line, sizeof(line), " Dest       : %02X %02X %02X %02X %02X %02X %02X -> \"%s\"\r\n", buf[1],buf[2],buf[3],buf[4],buf[5],buf[6],buf[7], dest_cs);
-    uart2_puts(line);
-    AX25_DecodeAddress(&buf[8], src_cs);
-    snprintf(line, sizeof(line), " Src        : %02X %02X %02X %02X %02X %02X %02X -> \"%s\"\r\n", buf[8],buf[9],buf[10],buf[11],buf[12],buf[13],buf[14], src_cs);
-    uart2_puts(line);
-    snprintf(line, sizeof(line), " Control    : %02X\r\n", buf[15]); uart2_puts(line);
-    snprintf(line, sizeof(line), " PID        : %02X\r\n", buf[16]); uart2_puts(line);
-
-    uint16_t payload_start = 17; uint16_t payload_end = (uint16_t)(len - 3);
-    if (payload_end > payload_start) {
-        uint16_t plen = (uint16_t)(payload_end - payload_start);
-        snprintf(line, sizeof(line), " Payload    : %u bytes\r\n", plen); uart2_puts(line);
-        Print_Hex_Bytes(&buf[payload_start], plen);
-        Print_Payload_ASCII(buf, payload_start, payload_end);
-    } else {
-        uart2_puts(" Payload    : (none)\r\n");
-    }
-    if (len >= 3) {
-        snprintf(line, sizeof(line), " FCS/CRC    : %02X %02X\r\n", buf[len - 3], buf[len - 2]);
-        uart2_puts(line);
-    }
-    snprintf(line, sizeof(line), " End Flag   : %02X %s\r\n", buf[len - 1], (buf[len - 1] == AX25_FLAG) ? "(OK)" : "(MISMATCH)");
-    uart2_puts(line);
+static void Print_Reassembled_Fields(const char *label, const cubus_ax25_reassembler_t *r) {
+    uart2_printf(" --- %s ---\r\n", label);
+    uart2_printf(" version=%u type=%u src=%u dst=%u seq=%u session=0x%04X flags=0x%02X\r\n",
+                 r->version, r->type, r->src_id, r->dst_id,
+                 r->seq_num, r->session_id, r->flags);
+    uart2_printf(" payload_len=%u rs_bytes_corrected=%d rssi=%d dBm snr=%d dB\r\n",
+                 r->payload_len, r->rs_bytes_corrected, (int)rx_last_rssi, (int)rx_last_snr);
+    Print_Hex_Bytes(r->payload, r->payload_len);
+    Print_Payload_ASCII(r->payload, r->payload_len);
 }
 
 extern void SysTick_Init_CPU2(uint32_t sys_freq_hz);
@@ -166,39 +148,114 @@ static bool Radio_Send_And_Wait(uint8_t *buffer, uint16_t size, uint32_t timeout
     return true;
 }
 
-/* 100x Telemetry Burst Stream Routine */
-static void Transmit_Burst_100(void) {
-    uint8_t tx_data[90] = "Namaste Everyone! From Antarikchya Nepal. S2S-2 CubeSat Beacon Communication Test";
+/* Sends one complete FX25_FRAME_LEN-byte FX.25 frame (tag + shortened
+   RS(255,223) codeword) through the SX126x's native packet engine,
+   configured (radio_app.c) for fixed-length/no-CRC/no-whitening so the
+   bytes that actually leave the antenna are real, standards-compliant
+   AX.25/FX.25 -- decodable by SatNOGS/gr-satellites/Direwolf, not just
+   this firmware. */
+static bool Send_FX25_Frame(const uint8_t frame[FX25_FRAME_LEN]) {
+    return Radio_Send_And_Wait((uint8_t *)frame, FX25_FRAME_LEN, TX_TIMEOUT_MS);
+}
 
-    uint8_t frame_buffer[AX25_MAX_FRAME_SIZE];
-    uint16_t frame_size = Protocol_CreatePacket(frame_buffer, tx_data, (uint16_t)strlen((const char *)tx_data), &SatelliteProfile);
-    if (frame_size == 0) return;
+/* Fragments one S2S2 message across AX.25/FX.25 frames and sends each.
+   Also records it in the tx history ring buffer (tx_history.h) so a later
+   TYPE_GAP_REPORT or CMD_REQUEST_RETRANSMIT can actually resend it instead
+   of dead-ending in ACK_STATUS_DATA_UNAVAILABLE. */
+static bool Send_Message(uint8_t type, uint8_t dst_id, uint16_t seq_num, uint8_t flags,
+                          const uint8_t *payload, uint16_t payload_len) {
+    uint8_t frames[CUBUS_AX25_MAX_FRAGMENTS][FX25_FRAME_LEN];
+    int num_frames = 0;
+    if (cubus_ax25_fragment(&s_link, 1, type, NODE_ID_SATELLITE, dst_id,
+                             seq_num, DEFAULT_SESSION_ID, flags,
+                             payload, payload_len, frames, &num_frames) != 0) {
+        uart2_puts("cubus_ax25_fragment FAILED\r\n");
+        return false;
+    }
 
-    memcpy(last_tx_scrambled, frame_buffer, frame_size);
-    last_tx_len = frame_size;
+    /* Don't re-store a retransmit: it's already a copy of an existing
+       history entry, and storing it would advance the ring cursor while
+       Retransmit_All_History() is iterating the very array it lives in. */
+    if ((flags & FLAG_RETRANSMIT) == 0) {
+        tx_history_store(&s_tx_history, seq_num, type, dst_id, flags, payload, payload_len);
+    }
 
-    char size_msg[80];
-    snprintf(size_msg, sizeof(size_msg), "BURST START: %d packets, %d bytes each, scrambled\r\n", BURST_PACKET_COUNT, frame_size);
-    uart2_puts(size_msg);
+    bool all_ok = true;
+    for (int f = 0; f < num_frames; f++) {
+        if (!Send_FX25_Frame(frames[f])) all_ok = false;
+    }
+    return all_ok;
+}
 
-    uart2_puts(" TX plaintext payload : \"");
-    uart2_puts((const char *)tx_data);
-    uart2_puts("\"\r\n");
-    Print_AX25_Fields("TX (on-air / scrambled)", frame_buffer, frame_size);
+/* Resends one previously-sent message by its original seq_num, if it's
+   still in the tx history buffer. Reuses the ORIGINAL seq_num (not a new
+   one) so the ground station's gap tracker marks the right entry received;
+   flags get FLAG_RETRANSMIT ORed in on top of whatever was originally set. */
+static bool Retransmit_By_Seq(uint16_t seq_num) {
+    const tx_history_entry_t *e = tx_history_find(&s_tx_history, seq_num);
+    if (e == NULL) return false;
+    return Send_Message(e->type, e->dst_id, e->seq_num, (uint8_t)(e->flags | FLAG_RETRANSMIT),
+                         e->payload, e->payload_len);
+}
 
-    uint32_t sent_ok = 0, sent_timeout = 0;
+/* CMD_REQUEST_RETRANSMIT carries no specific seq list (unlike
+   TYPE_GAP_REPORT) -- it's a coarse "resend what you've still got" nudge.
+   Resends every entry currently in the tx history buffer. Returns the
+   count actually resent. */
+static int Retransmit_All_History(void) {
+    int count = 0;
+    for (int i = 0; i < TX_HISTORY_LEN; i++) {
+        if (!s_tx_history.entries[i].used) continue;
+        const tx_history_entry_t *e = &s_tx_history.entries[i];
+        if (Send_Message(e->type, e->dst_id, e->seq_num, (uint8_t)(e->flags | FLAG_RETRANSMIT),
+                          e->payload, e->payload_len)) {
+            count++;
+        }
+    }
+    return count;
+}
+
+/* Replies to a telecommand with a TYPE_ACK frame carrying the standard
+   status code (see s2s2_commands.h) and the seq_num of the command it's
+   acknowledging. */
+static void Send_Ack(uint8_t status, uint8_t data_id, uint16_t acked_seq) {
+    cubus_ack_t ack = { .status = status, .data_id = data_id, .acked_seq = acked_seq };
+    uint8_t payload[ACK_PAYLOAD_LEN];
+    ack_pack(&ack, payload);
+
+    uint16_t seq = s_tx_seq++;
+    uart2_printf("TX ACK: status=0x%02X (%s) for seq=%u\r\n", status, ack_status_str(status), acked_seq);
+    Send_Message(TYPE_ACK, NODE_ID_GROUND, seq, 0, payload, sizeof(payload));
+}
+
+/* BURST_PACKET_COUNT-packet Telemetry Burst Stream, sequenced with a
+   shared session_id and the last packet flagged FLAG_LAST_IN_BURST. */
+static void Transmit_Burst(void) {
+    uart2_printf("BURST START: %d telemetry frames, session=0x%04X\r\n",
+                 BURST_PACKET_COUNT, DEFAULT_SESSION_ID);
+
+    uint32_t sent_ok = 0, sent_fail = 0;
     for (int i = 0; i < BURST_PACKET_COUNT; i++) {
-        bool ok = Radio_Send_And_Wait(frame_buffer, frame_size, 3000);
-        if (ok) sent_ok++; else sent_timeout++;
-        char pkt_msg[48];
-        snprintf(pkt_msg, sizeof(pkt_msg), " TX packet %3d/%d : %s\r\n", i + 1, BURST_PACKET_COUNT, ok ? "sent OK" : "TIMEOUT");
-        uart2_puts(pkt_msg);
+        char text[MAX_PAYLOAD_LEN];
+        int text_len = snprintf(text, sizeof(text),
+            "S2S2 telemetry #%03d - Namaste Everyone! From Antarikchya Nepal. CubeSat Beacon Test",
+            i);
+        if (text_len < 0) text_len = 0;
+        if ((uint16_t)text_len > MAX_PAYLOAD_LEN) text_len = MAX_PAYLOAD_LEN;
+
+        uint8_t flags = (i == BURST_PACKET_COUNT - 1) ? FLAG_LAST_IN_BURST : 0;
+        uint16_t seq = s_tx_seq++;
+
+        bool ok = Send_Message(TYPE_TELEMETRY, NODE_ID_GROUND, seq, flags,
+                                (const uint8_t *)text, (uint16_t)text_len);
+        if (ok) sent_ok++; else sent_fail++;
+        uart2_printf(" TX frame %3d/%d : seq=%u %s\r\n", i + 1, BURST_PACKET_COUNT, seq,
+                     ok ? "sent OK" : "TIMEOUT");
         CPU2_Delay_Ms(25);
     }
 
-    char done_msg[96];
-    snprintf(done_msg, sizeof(done_msg), "BURST COMPLETE (%lu/%d sent cleanly, %lu timed out)\r\n", (unsigned long)sent_ok, BURST_PACKET_COUNT, (unsigned long)sent_timeout);
-    uart2_puts(done_msg);
+    uart2_printf("BURST COMPLETE (%lu/%d sent cleanly, %lu failed)\r\n",
+                 (unsigned long)sent_ok, BURST_PACKET_COUNT, (unsigned long)sent_fail);
 }
 
 /* Asynchronous Housekeeping Beacon Timer Loop */
@@ -206,27 +263,29 @@ static void Send_Beacon_If_Due(void) {
     if (app_state != STATE_IDLE_RX) {
         return;
     }
+#ifdef DEBUG_BUILD
+    if (!s_beacon_enabled) {
+        return;
+    }
+#endif
     uint32_t now = Get_Time_Ms();
     if ((now - last_beacon_tick_ms) < BEACON_INTERVAL_MS) {
         return;
     }
     last_beacon_tick_ms = now;
 
-    uint8_t beacon_text[32] = "NEPSAT BEACON";
-    uint8_t frame_buffer[AX25_MAX_FRAME_SIZE];
-    uint16_t frame_size = Protocol_CreatePacket(frame_buffer, beacon_text, (uint16_t)strlen((const char *)beacon_text), &SatelliteProfile);
-    if (frame_size == 0) return;
-
-    memcpy(last_tx_scrambled, frame_buffer, frame_size);
-    last_tx_len = frame_size;
+    const char *beacon_text = "NEPSAT BEACON";
+    uint16_t plen = (uint16_t)strlen(beacon_text);
+    uint16_t seq = s_tx_seq++;
 
     uart2_puts("\r\nBEACON TX (5s tick)\r\n");
-    uart2_puts(" TX plaintext payload : \"");
-    uart2_puts((const char *)beacon_text);
-    uart2_puts("\"\r\n");
-    Print_AX25_Fields("TX (on-air / scrambled)", frame_buffer, frame_size);
-
-    Radio_Send_And_Wait(frame_buffer, frame_size, 3000);
+    /* TYPE_RAW, not TYPE_TELEMETRY: this is a plain ASCII placeholder, not
+       a [data_id][struct] telemetry payload (see s2s2_commands.h) -- a
+       receiver that follows that spec would otherwise eat the first byte
+       as a bogus data_id (e.g. showing "EPSAT BEACON" instead of "NEPSAT
+       BEACON"). */
+    Send_Message(TYPE_RAW, NODE_ID_GROUND, seq, FLAG_LAST_IN_BURST,
+                 (const uint8_t *)beacon_text, plen);
 
     /* Back to continuous RX listening on 437.375 MHz */
     rx_done_flag = 0;
@@ -235,8 +294,115 @@ static void Send_Beacon_If_Due(void) {
     RadioApp_StartRx();
 }
 
-static uint8_t s_prev_rx_buf[AX25_MAX_FRAME_SIZE];
-static uint16_t s_prev_rx_len = 0;
+#ifdef DEBUG_BUILD
+/* Case-insensitive prefix match, e.g. str_starts_ieq("TX deadbeef", "TX ").
+   Only needed by the DEBUG_BUILD-only TX/POWER UART commands below -- not
+   compiled into a production image at all, not just gated at runtime. */
+static bool str_starts_ieq(const char *s, const char *prefix) {
+    while (*prefix) {
+        char a = *s++;
+        char b = *prefix++;
+        if (a >= 'a' && a <= 'z') a -= 32;
+        if (b >= 'a' && b <= 'z') b -= 32;
+        if (a != b) return false;
+    }
+    return true;
+}
+
+/* Case-insensitive exact match, e.g. str_ieq("beacon on", "BEACON ON"). */
+static bool str_ieq(const char *s, const char *other) {
+    return str_starts_ieq(s, other) && s[strlen(other)] == '\0';
+}
+
+static int hex_nibble(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* Decodes an even-length hex string into bytes. Returns the byte count,
+   or -1 on odd length, a non-hex character, or more bytes than max_out. */
+static int hex_decode(const char *hex, uint8_t *out, int max_out) {
+    int len = (int)strlen(hex);
+    if (len % 2 != 0) return -1;
+    int n = len / 2;
+    if (n > max_out) return -1;
+    for (int i = 0; i < n; i++) {
+        int hi = hex_nibble(hex[i * 2]);
+        int lo = hex_nibble(hex[i * 2 + 1]);
+        if (hi < 0 || lo < 0) return -1;
+        out[i] = (uint8_t)((hi << 4) | lo);
+    }
+    return n;
+}
+#endif /* DEBUG_BUILD */
+
+static bool USART_TryReadLine(char *out, uint16_t max) {
+    static char buffer[CMD_LINE_MAX];
+    static uint16_t index = 0;
+    uint8_t c;
+
+    if (!uart2_try_getc(&c)) return false;
+
+    uart2_putc((char)c);
+
+    if (c == '\r' || c == '\n') {
+        if (index == 0) return false;
+        buffer[index] = 0;
+        uint16_t n = (index < (uint16_t)(max - 1)) ? index : (uint16_t)(max - 1);
+        memcpy(out, buffer, n);
+        out[n] = 0;
+        index = 0;
+        uart2_puts("\r\n");
+        return true;
+    }
+
+    if (index < CMD_LINE_MAX - 1) buffer[index++] = (char)c;
+    return false;
+}
+
+/* Polled every main-loop iteration regardless of app_state.
+   DEBUG_BUILD only: "TX <hex>" transmits arbitrary host-supplied bytes
+   downlink as TYPE_RAW (so a host GUI/terminal can key any test payload
+   out over RF), "POWER <dbm>" overrides the TX power for bench
+   testing (see RadioApp_SetTxPower / config.h's BENCH_TX_POWER_DBM), and
+   "BEACON ON"/"BEACON OFF" toggles the 5s housekeeping beacon (useful for
+   isolating RF captures to only manually-triggered traffic). None of this
+   is compiled into a production build - see Makefile's BUILD=production. */
+static void Process_UART_Command(void) {
+    static char command[CMD_LINE_MAX];
+    if (!USART_TryReadLine(command, sizeof(command))) return;
+
+#ifdef DEBUG_BUILD
+    if (str_starts_ieq(command, "TX ")) {
+        uint8_t payload[MAX_PAYLOAD_LEN];
+        int n = hex_decode(command + 3, payload, sizeof(payload));
+        if (n < 0) {
+            uart2_puts("ERR bad hex (need an even number of 0-9/a-f characters, "
+                       "e.g. TX 48656C6C6F)\r\n");
+            return;
+        }
+        uint16_t seq = s_tx_seq++;
+        bool ok = Send_Message(TYPE_RAW, NODE_ID_GROUND, seq, FLAG_LAST_IN_BURST,
+                                payload, (uint16_t)n);
+        uart2_printf("%s (%d byte%s)\r\n", ok ? "OK sent" : "ERR send failed",
+                     n, n == 1 ? "" : "s");
+    } else if (str_starts_ieq(command, "POWER ")) {
+        int dbm = atoi(command + 6);
+        RadioApp_SetTxPower((int8_t)dbm);
+    } else if (str_ieq(command, "BEACON ON")) {
+        s_beacon_enabled = true;
+        uart2_puts("BEACON ON\r\n");
+    } else if (str_ieq(command, "BEACON OFF")) {
+        s_beacon_enabled = false;
+        uart2_puts("BEACON OFF\r\n");
+    } else
+#endif
+    if (command[0] != 0) {
+        uart2_printf("UNKNOWN COMMAND : %s\r\n", command);
+    }
+}
 
 int main(void) {
     SystemInit();
@@ -244,7 +410,12 @@ int main(void) {
     SysTick_Init_CPU2(48000000UL);
     uart2_puts("HAL_Init done\r\n");
     uart2_init();
-    uart2_puts("\r\n=== STM32WL55 AX.25 + G3RUH COMMAND->BURST START [rev9: 100-packet burst + sliding RX] ===\r\n");
+    uart2_puts("\r\n=== STM32WL55 GMSK / S2S2 over AX.25+FX.25 [satellite] ===\r\n");
+#ifdef DEBUG_BUILD
+    uart2_puts("*** DEBUG BUILD - TX <hex> / POWER <dbm> UART backdoors ENABLED ***\r\n");
+#else
+    uart2_puts("*** PRODUCTION BUILD ***\r\n");
+#endif
 
     RBI_Init();
     uart2_puts("RF FRONT END OK\r\n");
@@ -259,18 +430,21 @@ int main(void) {
         .RxDone = OnRxDone, .RxTimeout = OnRxTimeout, .RxError = OnRxError
     };
 
+    cubus_proto_init();
     RadioApp_Init(&SatelliteProfile, &events);
+    cubus_ax25_reassembler_init(&s_reassembler);
+    tx_history_init(&s_tx_history);
     RadioApp_StartRx();
 
     uart2_puts("LISTENING FOR COMMAND (and beaconing every 5s)...\r\n");
-
-    char tick_msg[40];
-    snprintf(tick_msg, sizeof(tick_msg), "TICK CHECK: %lu\r\n", (unsigned long)Get_Time_Ms());
-    uart2_puts(tick_msg);
+#ifdef DEBUG_BUILD
+    uart2_puts("Type TX <hex> to transmit arbitrary bytes downlink, e.g. TX 48656C6C6F\r\n");
+    uart2_puts("Type POWER <dbm> to override TX power for bench testing\r\n");
+    uart2_puts("Type BEACON ON / BEACON OFF to toggle the 5s housekeeping beacon\r\n");
+#endif
 
     app_state = STATE_IDLE_RX;
     last_beacon_tick_ms = Get_Time_Ms();
-    s_prev_rx_len = 0;
 
     while (1) {
         switch (app_state) {
@@ -287,109 +461,155 @@ int main(void) {
             }
 
             case STATE_PROCESS_COMMAND: {
-                uint16_t raw_len = (rx_frame_size > AX25_MAX_FRAME_SIZE) ? AX25_MAX_FRAME_SIZE : rx_frame_size;
-                uint8_t raw_copy[AX25_MAX_FRAME_SIZE];
-                memcpy(raw_copy, (const void *)rx_frame_buffer, raw_len);
+                uint8_t frame_copy[FX25_FRAME_LEN];
+                memset(frame_copy, 0, sizeof(frame_copy));
+                memcpy(frame_copy, (const void *)rx_chunk_buffer, rx_chunk_size);
 
-                /* Combine with previous buffer to form a 400-byte sliding window across chunk boundaries */
-                uint8_t stream_buffer[AX25_MAX_FRAME_SIZE * 2];
-                uint16_t stream_len = 0;
+                int accept_rc = cubus_ax25_accept_frame(&s_reassembler, frame_copy);
 
-                if (s_prev_rx_len > 0) {
-                    memcpy(&stream_buffer[0], s_prev_rx_buf, s_prev_rx_len);
-                    stream_len += s_prev_rx_len;
-                }
-                memcpy(&stream_buffer[stream_len], raw_copy, raw_len);
-                stream_len += raw_len;
-
-                /* Save current buffer for the next sliding window */
-                memcpy(s_prev_rx_buf, raw_copy, raw_len);
-                s_prev_rx_len = raw_len;
-
-                uint8_t decoded_frame[AX25_MAX_FRAME_SIZE];
-                uint16_t decoded_len = 0;
-
-                if (!Protocol_ExtractFrame(stream_buffer, stream_len, decoded_frame, sizeof(decoded_frame), &decoded_len)) {
-                    /* Noise buffer - no frame found; smoothly continue listening */
+                if (accept_rc < 0) {
+                    uart2_printf("frame rejected (bad FX.25 tag/RS, bad AX.25 FCS, or malformed) "
+                                 "rssi=%d dBm snr=%d dB - still listening\r\n",
+                                 (int)rx_last_rssi, (int)rx_last_snr);
                     app_state = STATE_IDLE_RX;
                     break;
                 }
-
-                /* Clear previous buffer history since frame was consumed */
-                s_prev_rx_len = 0;
+                if (accept_rc == 0) {
+                    /* Message still incomplete - keep listening for more fragments. */
+                    app_state = STATE_IDLE_RX;
+                    break;
+                }
 
                 uart2_puts("\r\n-----------------------------------\r\n");
-                uart2_puts("VALID AX.25 FRAME RECEIVED - PROCESSING COMMAND...\r\n");
-                Print_AX25_Fields("DESCRAMBLED", decoded_frame, decoded_len);
+                uart2_puts("VALID S2S2 MESSAGE REASSEMBLED - PROCESSING COMMAND...\r\n");
+                Print_Reassembled_Fields("RX", &s_reassembler);
 
-                bool crc1_ok = AX25_VerifyCRC_Method1(decoded_frame, decoded_len);
-                uint16_t crc2_computed = 0, crc2_recv_le = 0, crc2_recv_be = 0;
-                bool crc2_ok = AX25_VerifyCRC_Method2(decoded_frame, decoded_len, &crc2_computed, &crc2_recv_le, &crc2_recv_be);
-
-                char crcmsg[128];
-                snprintf(crcmsg, sizeof(crcmsg), " CRC method 1 (reversed X-25)      : %s\r\n", crc1_ok ? "PASS" : "FAIL");
-                uart2_puts(crcmsg);
-                snprintf(crcmsg, sizeof(crcmsg), " CRC method 2 (direct CCITT-FALSE) : %s (computed=0x%04X LE=0x%04X BE=0x%04X)\r\n", crc2_ok ? "PASS" : "FAIL", crc2_computed, crc2_recv_le, crc2_recv_be);
-                uart2_puts(crcmsg);
-
-                if (!(crc1_ok || crc2_ok)) {
-                    uart2_puts(" *** COMMAND RECEIVED: NO (CRC failed both methods) ***\r\n");
-                    app_state = STATE_IDLE_RX;
-                    break;
-                }
-                if (decoded_len < 17) {
-                    uart2_puts(" *** COMMAND RECEIVED: NO (frame too short) ***\r\n");
-                    app_state = STATE_IDLE_RX;
-                    break;
-                }
-
-                char dest_cs[7], src_cs[7];
-                AX25_DecodeAddress(&decoded_frame[1], dest_cs);
-                AX25_DecodeAddress(&decoded_frame[8], src_cs);
-                char id_msg[80];
-                snprintf(id_msg, sizeof(id_msg), "FRAME: DEST=%s SRC=%s\r\n", dest_cs, src_cs);
-                uart2_puts(id_msg);
-
-                if (strcmp(dest_cs, SatelliteProfile.sourceCallsign) != 0) {
-                    uart2_printf(" *** COMMAND RECEIVED: NO (addressed to \"%s\", not us) ***\r\n", dest_cs);
-                    app_state = STATE_IDLE_RX;
-                    break;
-                }
-
-                uint16_t payload_start = 17;
-                uint16_t payload_end = decoded_len - 3;
-                if (payload_end <= payload_start) {
-                    uart2_puts(" *** COMMAND RECEIVED: NO (empty payload, no opcode) ***\r\n");
-                    app_state = STATE_IDLE_RX;
-                    break;
-                }
-
-                uint8_t opcode = decoded_frame[payload_start];
-                uart2_printf(" *** COMMAND RECEIVED: YES (from %s, opcode 0x%02X) ***\r\n", src_cs, opcode);
-
-                if (opcode == CMD_REQUEST_BURST) {
-                    if ((Get_Time_Ms() - last_burst_finish_time) < 4000) {
-                        uart2_puts("CMD_REQUEST_BURST duplicate packet - ignoring\r\n");
-                        app_state = STATE_IDLE_RX;
-                    } else {
-                        uart2_puts("CMD_REQUEST_BURST ACCEPTED - STARTING 100-PACKET BURST\r\n");
-                        app_state = STATE_TRANSMIT_BURST;
+                if (s_reassembler.type == TYPE_GAP_REPORT && s_reassembler.dst_id == NODE_ID_SATELLITE) {
+                    /* Payload = big-endian uint16 list of missing seq numbers
+                       (see gs_main.c's Send_Gap_Report / format.md). Resend
+                       whichever ones are still in the tx history buffer. */
+                    uint16_t n_missing = (uint16_t)(s_reassembler.payload_len / 2);
+                    uart2_printf("GAP REPORT RECEIVED: %u missing seq number(s)\r\n", n_missing);
+                    int resent = 0, unavailable = 0;
+                    for (uint16_t i = 0; i < n_missing; i++) {
+                        uint16_t seq = (uint16_t)((s_reassembler.payload[i * 2] << 8) |
+                                                   s_reassembler.payload[i * 2 + 1]);
+                        if (Retransmit_By_Seq(seq)) {
+                            resent++;
+                        } else {
+                            unavailable++;
+                            uart2_printf(" seq=%u no longer in tx history - cannot retransmit\r\n", seq);
+                        }
                     }
-                } else {
-                    uart2_puts("UNKNOWN OPCODE - IGNORING\r\n");
+                    uart2_printf("GAP REPORT: resent %d, %d unavailable\r\n", resent, unavailable);
                     app_state = STATE_IDLE_RX;
+                    break;
                 }
+
+                if (s_reassembler.type != TYPE_TELECOMMAND || s_reassembler.dst_id != NODE_ID_SATELLITE) {
+                    uart2_puts(" *** COMMAND RECEIVED: NO (not a telecommand addressed to us) ***\r\n");
+                    app_state = STATE_IDLE_RX;
+                    break;
+                }
+                cubus_command_t cmd;
+                if (command_unpack(s_reassembler.payload, s_reassembler.payload_len, &cmd) != 0) {
+                    uart2_puts(" *** COMMAND RECEIVED: NO (payload too short for a command) ***\r\n");
+                    if (s_reassembler.flags & FLAG_ACK_REQUESTED)
+                        Send_Ack(ACK_STATUS_PACKET_ERROR, DATA_ID_GENERAL, s_reassembler.seq_num);
+                    app_state = STATE_IDLE_RX;
+                    break;
+                }
+
+                uart2_printf(" *** COMMAND RECEIVED: YES (from node %u, opcode 0x%02X) ***\r\n",
+                             s_reassembler.src_id, cmd.opcode);
+                bool want_ack = (s_reassembler.flags & FLAG_ACK_REQUESTED) != 0;
+                uint16_t cmd_seq = s_reassembler.seq_num;
+
+                switch (cmd.opcode) {
+                    case CMD_REQUEST_BURST:
+                        if ((Get_Time_Ms() - last_burst_finish_time) < 4000) {
+                            uart2_puts("CMD_REQUEST_BURST duplicate packet - ignoring\r\n");
+                            if (want_ack) Send_Ack(ACK_STATUS_BUSY, DATA_ID_GENERAL, cmd_seq);
+                            app_state = STATE_IDLE_RX;
+                        } else {
+                            uart2_puts("CMD_REQUEST_BURST ACCEPTED - STARTING BURST\r\n");
+                            if (want_ack) Send_Ack(ACK_STATUS_ACCEPTED, DATA_ID_GENERAL, cmd_seq);
+                            app_state = STATE_TRANSMIT_BURST;
+                        }
+                        break;
+
+                    case CMD_HEARTBEAT:
+                        uart2_puts("CMD_HEARTBEAT\r\n");
+                        if (want_ack) Send_Ack(ACK_STATUS_COMPLETED, DATA_ID_GENERAL, cmd_seq);
+                        app_state = STATE_IDLE_RX;
+                        break;
+
+                    case CMD_ABORT_MISSION:
+                        uart2_puts("CMD_ABORT_MISSION\r\n");
+                        if (want_ack) Send_Ack(ACK_STATUS_COMPLETED, DATA_ID_GENERAL, cmd_seq);
+                        app_state = STATE_IDLE_RX;
+                        break;
+
+                    case CMD_GET_HEALTH:
+                    case CMD_GET_HOUSEKEEPING:
+                    case CMD_GET_BEACON1:
+                    case CMD_GET_BEACON2:
+                    case CMD_GET_ADCS:
+                    case CMD_GET_SAT_LOG:
+                        /* Subsystem sensor drivers (ADCS/EPDM/OBC file store) aren't
+                           wired up in this firmware yet - reply honestly instead of
+                           fabricating data. */
+                        uart2_printf("opcode 0x%02X: requested data not available on this build\r\n", cmd.opcode);
+                        if (want_ack) Send_Ack(ACK_STATUS_DATA_UNAVAILABLE, cmd.data_id, cmd_seq);
+                        app_state = STATE_IDLE_RX;
+                        break;
+
+                    case CMD_RUN_CAMERA:
+                    case CMD_DOWNLOAD_FILE:
+                    case CMD_DIGIPEATER:
+                        /* Camera/file/digipeater missions not implemented in this build. */
+                        uart2_printf("opcode 0x%02X: mission not implemented on this build\r\n", cmd.opcode);
+                        if (want_ack) Send_Ack(ACK_STATUS_MISSION_INACTIVE, cmd.data_id, cmd_seq);
+                        app_state = STATE_IDLE_RX;
+                        break;
+
+                    case CMD_REQUEST_RETRANSMIT: {
+                        /* Carries no specific seq list (that's what
+                           TYPE_GAP_REPORT is for, handled above) - this is a
+                           coarse "resend what you've still got" nudge, so
+                           just replay everything currently in the tx history
+                           ring buffer (tx_history.h). */
+                        int available = 0;
+                        for (int hi = 0; hi < TX_HISTORY_LEN; hi++) {
+                            if (s_tx_history.entries[hi].used) available++;
+                        }
+                        if (want_ack) {
+                            Send_Ack(available > 0 ? ACK_STATUS_ACCEPTED : ACK_STATUS_DATA_UNAVAILABLE,
+                                     DATA_ID_GENERAL, cmd_seq);
+                        }
+                        int resent = Retransmit_All_History();
+                        uart2_printf("CMD_REQUEST_RETRANSMIT: resent %d buffered message(s)\r\n", resent);
+                        app_state = STATE_IDLE_RX;
+                        break;
+                    }
+
+                    default:
+                        uart2_printf("UNKNOWN OPCODE 0x%02X - IGNORING\r\n", cmd.opcode);
+                        if (want_ack) Send_Ack(ACK_STATUS_INVALID_COMMAND, DATA_ID_GENERAL, cmd_seq);
+                        app_state = STATE_IDLE_RX;
+                        break;
+                }
+                cubus_ax25_reassembler_init(&s_reassembler);
                 break;
             }
 
             case STATE_TRANSMIT_BURST:
-                Transmit_Burst_100();
+                Transmit_Burst();
                 last_burst_finish_time = Get_Time_Ms();
-                s_prev_rx_len = 0;
                 rx_done_flag = 0;
                 rx_timeout_flag = 0;
                 rx_error_flag = 0;
-                memset((void *)rx_frame_buffer, 0, sizeof(rx_frame_buffer));
+                cubus_ax25_reassembler_init(&s_reassembler);
                 last_beacon_tick_ms = Get_Time_Ms();
                 RadioApp_StartRx();
                 uart2_puts("LISTENING FOR NEXT COMMAND (and beaconing every 5s)...\r\n");
@@ -397,6 +617,7 @@ int main(void) {
                 break;
         }
         Send_Beacon_If_Due();
+        Process_UART_Command();
     }
     return 0;
 }

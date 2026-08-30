@@ -1,0 +1,739 @@
+#!/usr/bin/env python3
+"""
+s2s2_tx_gui.py -- PyQt "backdoor" control panel for the Nucleo-WL55JC over
+its USB-serial debug UART: raw TX <hex>, TX power override, and beacon
+on/off, all DEBUG_BUILD-only firmware commands (see ipcc_m0plus_main.c /
+satellite/gs_main.c, Process_UART_Command). A production-built board
+answers every one of these with "UNKNOWN COMMAND" -- see the architecture
+README section 9.1. This tool has no privileged access of its own; it is
+exactly as powerful as the firmware it's talking to lets it be, no more.
+
+Commands sent:
+    TX <hex>       -- transmit arbitrary bytes downlink as TYPE_RAW
+    POWER <dbm>     -- override TX power (-9..22 dBm, SX126x HP-PA range)
+    BEACON ON/OFF   -- toggle the satellite's 5s housekeeping beacon
+
+Works with either PyQt5 or PyQt6 (whichever is installed), pyserial, and
+pyqtgraph (for the TX-activity graph).
+
+Install:
+    pip install pyserial pyqtgraph PyQt6      # or PyQt5
+
+Run:
+    python3 s2s2_tx_gui.py
+
+Usage:
+    1. Pick the Nucleo's serial port and baud rate (must match whatever
+       uart_debug.c was actually built with -- 115200 by default, or 9600
+       if the firmware was built with -DUART_DEBUG_BAUD_9600).
+    2. Click Connect.
+    3. Type a message (Text mode encodes it as UTF-8 automatically) or
+       paste raw hex bytes (Hex mode), then click Send / press Enter.
+       Up/Down arrow in the input box recalls previously sent messages.
+       "Resend last" repeats the most recent payload with one click.
+       "Send file..." reads a local file's raw bytes and sends them
+       (rejected up front if it's over the 659-byte payload limit).
+    4. The "Radio Control" panel: drag the power slider and click Apply to
+       send POWER <dbm> (clamped -9..22, the SX126x HP-PA's real range);
+       toggle Beacon ON/OFF to silence or resume the satellite's automatic
+       5s beacon (useful for isolating an RF capture to only what you send
+       manually). Both reflect the firmware's own confirmation reply, not
+       just what you clicked -- if the board is running a production
+       build neither will ever confirm, since it doesn't know either
+       command.
+    5. The "TX Activity" graph parses the firmware's own log lines (not
+       just what this GUI sent) for every actual radio transmission --
+       "RadioApp_Send: len=N" fires for beacons, bursts, and manual TX
+       alike -- and plots frames/sec and cumulative bytes sent live, so
+       you can see real downlink activity even when it wasn't this GUI
+       that triggered it.
+    6. Anything the Nucleo prints shows up in the log pane, color-coded:
+       green for what you sent and "OK ..." replies, red for "ERR"/"FAIL"
+       lines, gray for connect/disconnect notices. The status bar tracks
+       total messages/bytes sent this session.
+"""
+
+import os
+import re
+import sys
+import time
+from collections import deque
+
+try:
+    from PyQt6.QtCore import Qt, QThread, pyqtSignal
+    from PyQt6.QtGui import QFont, QTextCursor, QTextCharFormat, QColor
+    from PyQt6.QtWidgets import (
+        QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+        QComboBox, QPushButton, QLineEdit, QPlainTextEdit, QLabel,
+        QRadioButton, QButtonGroup, QMessageBox, QStatusBar, QFileDialog,
+        QSplitter, QGroupBox, QSlider, QCheckBox, QFrame,
+    )
+    PYQT_VERSION = 6
+except ImportError:
+    from PyQt5.QtCore import Qt, QThread, pyqtSignal
+    from PyQt5.QtGui import QFont, QTextCursor, QTextCharFormat, QColor
+    from PyQt5.QtWidgets import (
+        QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+        QComboBox, QPushButton, QLineEdit, QPlainTextEdit, QLabel,
+        QRadioButton, QButtonGroup, QMessageBox, QStatusBar, QFileDialog,
+        QSplitter, QGroupBox, QSlider, QCheckBox, QFrame,
+    )
+    PYQT_VERSION = 5
+
+import numpy as np
+import pyqtgraph as pg
+import serial
+import serial.tools.list_ports
+
+MAX_PAYLOAD_BYTES = 659  # s2s2com.h MAX_PAYLOAD_LEN -- cubus_ax25_fragment's ceiling
+BAUD_RATES = [9600, 115200]
+DEFAULT_BAUD = 115200
+MIN_POWER_DBM = -9    # SX126x HP-PA real range (RadioApp_SetTxPower clamps to this)
+MAX_POWER_DBM = 22
+DEFAULT_POWER_DBM = 22  # config.h RADIO_TX_POWER_DBM, the production default
+ACTIVITY_WINDOW_S = 90   # rolling window kept for the TX-activity graph
+ACTIVITY_BIN_S = 1.0     # bin width for the frames/sec bar
+
+_END_MOVE = QTextCursor.MoveOperation.End if PYQT_VERSION == 6 else QTextCursor.End
+
+# -- "backdoor" console aesthetic, matching s2s2_rx_gui.py -----------------
+BG = "#05070a"
+PANEL = "#0b0f14"
+FG = "#39ff9c"
+FG_DIM = "#3f6f5c"
+ACCENT = "#22d3ee"
+WARN = "#ffb020"
+ERR = "#ff4d5e"
+
+DARK_STYLESHEET = f"""
+QWidget {{ background-color: {BG}; color: {FG}; font-family: Menlo, Consolas, monospace; }}
+QMainWindow {{ background-color: {BG}; }}
+QGroupBox {{ border: 1px solid #143028; border-radius: 6px; margin-top: 10px;
+             color: {ACCENT}; font-weight: bold; padding-top: 8px; }}
+QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 4px; }}
+QPushButton {{ background-color: #0f1c17; border: 1px solid #1f4a3a; border-radius: 4px;
+               padding: 5px 12px; color: {FG}; }}
+QPushButton:hover {{ background-color: #143528; border-color: {ACCENT}; }}
+QPushButton:pressed {{ background-color: #1c4a37; }}
+QPushButton:disabled {{ color: #2a4038; border-color: #17251f; }}
+QPushButton:checked {{ background-color: #1c4a37; border-color: {WARN}; color: {WARN}; }}
+QLineEdit, QComboBox, QPlainTextEdit {{
+    background-color: {PANEL}; border: 1px solid #17251f; color: {FG}; selection-background-color: #1c4a37; }}
+QCheckBox, QRadioButton {{ color: {FG}; }}
+QStatusBar {{ background-color: {PANEL}; color: {FG_DIM}; }}
+QLabel {{ color: {FG}; }}
+QSlider::groove:horizontal {{ height: 6px; background: #17251f; border-radius: 3px; }}
+QSlider::handle:horizontal {{ background: {ACCENT}; width: 14px; margin: -5px 0; border-radius: 7px; }}
+QSlider::sub-page:horizontal {{ background: #1c4a37; border-radius: 3px; }}
+"""
+
+# Log lines the firmware itself prints for every actual radio TX, whether
+# triggered by this GUI, the automatic beacon timer, or a telemetry burst --
+# used to drive the "TX Activity" graph off real transmissions, not just
+# what this GUI happened to send.
+_RE_RADIO_SEND = re.compile(r"RadioApp_Send: len=(\d+)")
+_RE_BEACON_TICK = re.compile(r"BEACON TX")
+_RE_POWER_ACK = re.compile(r"RadioApp_SetTxPower:\s*(-?\d+)\s*dBm")
+_RE_BEACON_STATE = re.compile(r"^BEACON (ON|OFF)$")
+
+
+def run_app_exec(app):
+    """exec() on PyQt6, exec_() on PyQt5."""
+    fn = getattr(app, "exec", None)
+    return fn() if fn is not None else app.exec_()
+
+
+class HistoryLineEdit(QLineEdit):
+    """QLineEdit with shell-style Up/Down history recall."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._history = []
+        self._history_idx = None
+        self._draft = ""
+
+    def record_history(self, text: str):
+        if text and (not self._history or self._history[-1] != text):
+            self._history.append(text)
+        self._history_idx = None
+        self._draft = ""
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key == Qt.Key.Key_Up if PYQT_VERSION == 6 else Qt.Key_Up:
+            self._navigate_history(-1)
+            return
+        if key == Qt.Key.Key_Down if PYQT_VERSION == 6 else Qt.Key_Down:
+            self._navigate_history(1)
+            return
+        super().keyPressEvent(event)
+
+    def _navigate_history(self, direction: int):
+        if not self._history:
+            return
+        if self._history_idx is None:
+            if direction > 0:
+                return
+            self._draft = self.text()
+            self._history_idx = len(self._history) - 1
+        else:
+            self._history_idx += direction
+        if self._history_idx < 0:
+            self._history_idx = 0
+        if self._history_idx >= len(self._history):
+            self._history_idx = None
+            self.setText(self._draft)
+            return
+        self.setText(self._history[self._history_idx])
+
+
+class SerialReader(QThread):
+    data_received = pyqtSignal(bytes)
+    error = pyqtSignal(str)
+
+    def __init__(self, ser):
+        super().__init__()
+        self._ser = ser
+        self._running = True
+
+    def run(self):
+        while self._running:
+            try:
+                n = self._ser.in_waiting
+                data = self._ser.read(n if n else 1)
+                if data:
+                    self.data_received.emit(data)
+            except serial.SerialException as e:
+                self.error.emit(str(e))
+                break
+
+    def stop(self):
+        self._running = False
+        self.wait(1000)
+
+
+class TxActivityPanel(QWidget):
+    """Live graph of real radio transmissions parsed from the firmware's
+    own log output -- frames/sec (bar) and cumulative bytes sent (line).
+    Driven by record_send()/record_beacon(), fed from parsed log lines,
+    not from this GUI's own send button -- so it reflects the satellite's
+    real TX activity (beacons included) even when idle."""
+
+    def __init__(self):
+        super().__init__()
+        self._start_t = time.monotonic()
+        self._events = deque()  # (t_offset, bytes)
+        self._cum_bytes = 0
+        self._cum_bytes_hist = deque(maxlen=600)
+        self._cum_time_hist = deque(maxlen=600)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        pg.setConfigOptions(antialias=True)
+
+        self.rate_plot = pg.PlotWidget(title="Frames sent / sec")
+        self.rate_plot.setBackground(PANEL)
+        self.rate_plot.showGrid(x=True, y=True, alpha=0.25)
+        self.rate_bar = pg.BarGraphItem(x=[0], height=[0], width=0.8, brush=FG)
+        self.rate_plot.addItem(self.rate_bar)
+        layout.addWidget(self.rate_plot, 1)
+
+        self.bytes_plot = pg.PlotWidget(title="Cumulative bytes transmitted")
+        self.bytes_plot.setBackground(PANEL)
+        self.bytes_plot.showGrid(x=True, y=True, alpha=0.25)
+        self.bytes_curve = self.bytes_plot.plot(pen=pg.mkPen(ACCENT, width=1.6))
+        layout.addWidget(self.bytes_plot, 1)
+
+        self.total_label = QLabel("0 frames / 0 bytes total")
+        self.total_label.setStyleSheet(f"color: {ACCENT}; font-weight: bold;")
+        layout.addWidget(self.total_label)
+
+    def reset(self):
+        self._start_t = time.monotonic()
+        self._events.clear()
+        self._cum_bytes = 0
+        self._cum_bytes_hist.clear()
+        self._cum_time_hist.clear()
+        self.total_label.setText("0 frames / 0 bytes total")
+
+    def record_send(self, n_bytes: int):
+        t = time.monotonic() - self._start_t
+        self._events.append((t, n_bytes))
+        cutoff = t - ACTIVITY_WINDOW_S
+        while self._events and self._events[0][0] < cutoff:
+            self._events.popleft()
+        self._cum_bytes += n_bytes
+        self._cum_time_hist.append(t)
+        self._cum_bytes_hist.append(self._cum_bytes)
+        self._redraw(t)
+
+    def _redraw(self, now_t: float):
+        if not self._events:
+            self.rate_bar.setOpts(x=[0], height=[0], width=0.8)
+        else:
+            n_bins = max(1, int(ACTIVITY_WINDOW_S / ACTIVITY_BIN_S))
+            counts = np.zeros(n_bins)
+            oldest = now_t - ACTIVITY_WINDOW_S
+            for t, _ in self._events:
+                idx = int((t - oldest) / ACTIVITY_BIN_S)
+                if 0 <= idx < n_bins:
+                    counts[idx] += 1
+            xs = oldest + np.arange(n_bins) * ACTIVITY_BIN_S
+            self.rate_bar.setOpts(x=xs, height=counts, width=ACTIVITY_BIN_S * 0.9)
+            self.rate_plot.setXRange(oldest, now_t + 1)
+
+        if self._cum_time_hist:
+            self.bytes_curve.setData(np.array(self._cum_time_hist), np.array(self._cum_bytes_hist))
+
+        total_frames = len(self._cum_bytes_hist)
+        self.total_label.setText(f"{total_frames} frame(s) / {self._cum_bytes} byte(s) total (this session)")
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("S2S2 Nucleo TX -- Debug Backdoor Console")
+        self.resize(1200, 760)
+
+        self.ser = None
+        self.reader = None
+        self.last_sent_payload = None
+        self.bytes_sent_total = 0
+        self.messages_sent_total = 0
+        self._line_buf = ""
+        self._current_power_dbm = DEFAULT_POWER_DBM
+        self._beacon_enabled = True
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        outer = QVBoxLayout(central)
+
+        # --- connection row ---
+        conn_row = QHBoxLayout()
+        conn_row.addWidget(QLabel("Port:"))
+        self.port_combo = QComboBox()
+        self.port_combo.setMinimumWidth(200)
+        conn_row.addWidget(self.port_combo)
+
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.clicked.connect(self.refresh_ports)
+        conn_row.addWidget(self.refresh_btn)
+
+        conn_row.addWidget(QLabel("Baud:"))
+        self.baud_combo = QComboBox()
+        for b in BAUD_RATES:
+            self.baud_combo.addItem(str(b), b)
+        self.baud_combo.setCurrentIndex(BAUD_RATES.index(DEFAULT_BAUD))
+        conn_row.addWidget(self.baud_combo)
+
+        self.connect_btn = QPushButton("Connect")
+        self.connect_btn.clicked.connect(self.toggle_connection)
+        conn_row.addWidget(self.connect_btn)
+
+        conn_row.addStretch(1)
+        outer.addLayout(conn_row)
+
+        # --- main split: (send/log) | (radio control + activity) ---
+        main_split = QSplitter(Qt.Orientation.Horizontal if PYQT_VERSION == 6 else Qt.Horizontal)
+
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setFont(QFont("Menlo", 11) if sys.platform == "darwin" else QFont("Consolas", 10))
+        left_layout.addWidget(self.log, 1)
+
+        clear_row = QHBoxLayout()
+        clear_row.addStretch(1)
+        clear_btn = QPushButton("Clear log")
+        clear_btn.clicked.connect(self.log.clear)
+        clear_row.addWidget(clear_btn)
+        left_layout.addLayout(clear_row)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Mode:"))
+        self.text_radio = QRadioButton("Text")
+        self.hex_radio = QRadioButton("Hex")
+        self.text_radio.setChecked(True)
+        mode_group = QButtonGroup(self)
+        mode_group.addButton(self.text_radio)
+        mode_group.addButton(self.hex_radio)
+        mode_row.addWidget(self.text_radio)
+        mode_row.addWidget(self.hex_radio)
+        mode_row.addStretch(1)
+        self.byte_count_label = QLabel("0 / %d bytes" % MAX_PAYLOAD_BYTES)
+        mode_row.addWidget(self.byte_count_label)
+        left_layout.addLayout(mode_row)
+
+        send_row = QHBoxLayout()
+        self.input = HistoryLineEdit()
+        self.input.setPlaceholderText(
+            "Type a message, or raw hex bytes in Hex mode... (Up/Down for history)")
+        self.input.returnPressed.connect(self.send_message)
+        self.input.textChanged.connect(self.update_byte_count)
+        send_row.addWidget(self.input, 1)
+
+        self.send_btn = QPushButton("Send")
+        self.send_btn.clicked.connect(self.send_message)
+        send_row.addWidget(self.send_btn)
+
+        self.resend_btn = QPushButton("Resend last")
+        self.resend_btn.setEnabled(False)
+        self.resend_btn.clicked.connect(self.resend_last)
+        send_row.addWidget(self.resend_btn)
+
+        self.send_file_btn = QPushButton("Send file...")
+        self.send_file_btn.clicked.connect(self.send_file)
+        send_row.addWidget(self.send_file_btn)
+        left_layout.addLayout(send_row)
+
+        main_split.addWidget(left)
+
+        # --- right: radio control + TX activity ---
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+
+        radio_box = QGroupBox("Radio Control  (DEBUG_BUILD only -- ignored/UNKNOWN on production firmware)")
+        radio_layout = QVBoxLayout(radio_box)
+
+        power_row = QHBoxLayout()
+        power_row.addWidget(QLabel("TX power:"))
+        self.power_slider = QSlider(Qt.Orientation.Horizontal if PYQT_VERSION == 6 else Qt.Horizontal)
+        self.power_slider.setMinimum(MIN_POWER_DBM)
+        self.power_slider.setMaximum(MAX_POWER_DBM)
+        self.power_slider.setValue(DEFAULT_POWER_DBM)
+        self.power_slider.valueChanged.connect(self._on_power_slider_changed)
+        power_row.addWidget(self.power_slider, 1)
+        self.power_value_label = QLabel(f"{DEFAULT_POWER_DBM:+d} dBm")
+        self.power_value_label.setMinimumWidth(60)
+        self.power_value_label.setStyleSheet(f"color: {ACCENT}; font-weight: bold;")
+        power_row.addWidget(self.power_value_label)
+        self.power_apply_btn = QPushButton("Apply")
+        self.power_apply_btn.clicked.connect(self.apply_power)
+        power_row.addWidget(self.power_apply_btn)
+        radio_layout.addLayout(power_row)
+
+        self.power_confirmed_label = QLabel("Confirmed by board: -- (send Apply)")
+        self.power_confirmed_label.setStyleSheet(f"color: {FG_DIM};")
+        radio_layout.addWidget(self.power_confirmed_label)
+
+        radio_layout.addWidget(_hline())
+
+        beacon_row = QHBoxLayout()
+        beacon_row.addWidget(QLabel("Housekeeping beacon (5s tick):"))
+        self.beacon_on_btn = QPushButton("ON")
+        self.beacon_on_btn.setCheckable(True)
+        self.beacon_on_btn.setChecked(True)
+        self.beacon_on_btn.clicked.connect(lambda: self.set_beacon(True))
+        beacon_row.addWidget(self.beacon_on_btn)
+        self.beacon_off_btn = QPushButton("OFF")
+        self.beacon_off_btn.setCheckable(True)
+        self.beacon_off_btn.clicked.connect(lambda: self.set_beacon(False))
+        beacon_row.addWidget(self.beacon_off_btn)
+        beacon_row.addStretch(1)
+        radio_layout.addLayout(beacon_row)
+
+        self.beacon_confirmed_label = QLabel("Confirmed by board: -- (click ON/OFF)")
+        self.beacon_confirmed_label.setStyleSheet(f"color: {FG_DIM};")
+        radio_layout.addWidget(self.beacon_confirmed_label)
+
+        right_layout.addWidget(radio_box)
+
+        activity_box = QGroupBox("TX Activity  (parsed from the board's own RadioApp_Send log lines)")
+        activity_layout = QVBoxLayout(activity_box)
+        self.activity = TxActivityPanel()
+        activity_layout.addWidget(self.activity)
+        right_layout.addWidget(activity_box, 1)
+
+        main_split.addWidget(right)
+        main_split.setSizes([700, 500])
+
+        outer.addWidget(main_split, 1)
+
+        self.status = QStatusBar()
+        self.setStatusBar(self.status)
+
+        self.set_connected_ui(False)
+        self.refresh_ports()
+        self.status.showMessage("Disconnected")
+
+    # ---------------------------------------------------------------
+    def refresh_ports(self):
+        current = self.port_combo.currentData()
+        self.port_combo.clear()
+        for p in serial.tools.list_ports.comports():
+            self.port_combo.addItem("%s (%s)" % (p.device, p.description), p.device)
+        if current:
+            idx = self.port_combo.findData(current)
+            if idx >= 0:
+                self.port_combo.setCurrentIndex(idx)
+
+    def set_connected_ui(self, connected):
+        self.port_combo.setEnabled(not connected)
+        self.baud_combo.setEnabled(not connected)
+        self.refresh_btn.setEnabled(not connected)
+        self.connect_btn.setText("Disconnect" if connected else "Connect")
+        self.send_btn.setEnabled(connected)
+        self.input.setEnabled(connected)
+        self.send_file_btn.setEnabled(connected)
+        self.resend_btn.setEnabled(connected and self.last_sent_payload is not None)
+        self.power_apply_btn.setEnabled(connected)
+        self.power_slider.setEnabled(connected)
+        self.beacon_on_btn.setEnabled(connected)
+        self.beacon_off_btn.setEnabled(connected)
+
+    def toggle_connection(self):
+        if self.ser is not None:
+            self.disconnect_serial()
+        else:
+            self.connect_serial()
+
+    def connect_serial(self):
+        port = self.port_combo.currentData()
+        if not port:
+            QMessageBox.warning(self, "No port", "No serial port selected. Plug in the Nucleo and click Refresh.")
+            return
+        baud = self.baud_combo.currentData()
+        try:
+            self.ser = serial.Serial(port, baud, timeout=0.1)
+        except serial.SerialException as e:
+            QMessageBox.critical(self, "Connection failed", str(e))
+            self.ser = None
+            return
+
+        self.reader = SerialReader(self.ser)
+        self.reader.data_received.connect(self.on_data_received)
+        self.reader.error.connect(self.on_serial_error)
+        self.reader.start()
+
+        self.set_connected_ui(True)
+        self.bytes_sent_total = 0
+        self.messages_sent_total = 0
+        self.activity.reset()
+        self.power_confirmed_label.setText("Confirmed by board: -- (send Apply)")
+        self.beacon_confirmed_label.setText("Confirmed by board: -- (click ON/OFF)")
+        self.status.showMessage("Connected to %s @ %d" % (port, baud))
+        self.append_log("--- connected to %s @ %d ---" % (port, baud), FG_DIM)
+
+    def disconnect_serial(self):
+        if self.reader:
+            self.reader.stop()
+            self.reader = None
+        if self.ser:
+            try:
+                self.ser.close()
+            except serial.SerialException:
+                pass
+            self.ser = None
+        self.set_connected_ui(False)
+        self.status.showMessage("Disconnected")
+        self.append_log("--- disconnected ---", FG_DIM)
+
+    def on_serial_error(self, message):
+        self.append_log("--- serial error: %s ---" % message, ERR)
+        self.disconnect_serial()
+
+    def on_data_received(self, data: bytes):
+        text = data.decode("latin-1", errors="replace")
+        self._line_buf += text
+        # Buffer until we have complete lines -- the firmware's own text
+        # doesn't align to read() chunk boundaries, so coloring a whole raw
+        # chunk (which might span two log lines, or half of one) would
+        # color unrelated text together. Split on any of \r\n, \r, \n.
+        parts = self._line_buf.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        self._line_buf = parts[-1]
+        for line in parts[:-1]:
+            self._handle_incoming_line(line)
+
+    def _handle_incoming_line(self, line: str):
+        self._append_colored_incoming_line(line)
+
+        m = _RE_RADIO_SEND.search(line)
+        if m:
+            self.activity.record_send(int(m.group(1)))
+
+        if _RE_BEACON_TICK.search(line):
+            pass  # already counted via the RadioApp_Send line it triggers
+
+        m = _RE_POWER_ACK.search(line)
+        if m:
+            dbm = int(m.group(1))
+            self._current_power_dbm = dbm
+            self.power_confirmed_label.setText(f"Confirmed by board: {dbm:+d} dBm")
+            self.power_confirmed_label.setStyleSheet(f"color: {ACCENT}; font-weight: bold;")
+
+        m = _RE_BEACON_STATE.match(line.strip())
+        if m:
+            on = (m.group(1) == "ON")
+            self._beacon_enabled = on
+            self.beacon_on_btn.setChecked(on)
+            self.beacon_off_btn.setChecked(not on)
+            self.beacon_confirmed_label.setText(f"Confirmed by board: {'ON' if on else 'OFF'}")
+            self.beacon_confirmed_label.setStyleSheet(
+                f"color: {ACCENT if on else WARN}; font-weight: bold;")
+
+    def _append_colored_incoming_line(self, line: str):
+        upper = line.upper()
+        if "ERR" in upper or "FAIL" in upper:
+            color = ERR
+        elif line.startswith("OK ") or " OK " in line:
+            color = ACCENT
+        else:
+            color = None
+        self.append_log(line, color)
+
+    def append_log(self, line: str, color=None):
+        cursor = self.log.textCursor()
+        cursor.movePosition(_END_MOVE)
+        fmt = QTextCharFormat()
+        if color is not None:
+            fmt.setForeground(QColor(color))
+        cursor.insertText(line + "\n", fmt)
+        self.log.setTextCursor(cursor)
+        self.log.ensureCursorVisible()
+
+    # ---------------------------------------------------------------
+    def _on_power_slider_changed(self, value: int):
+        self.power_value_label.setText(f"{value:+d} dBm")
+
+    def apply_power(self):
+        if self.ser is None:
+            return
+        dbm = self.power_slider.value()
+        line = ("POWER %d\r\n" % dbm).encode("ascii")
+        try:
+            self.ser.write(line)
+        except serial.SerialException as e:
+            self.on_serial_error(str(e))
+            return
+        self.append_log("--- sent POWER %d ---" % dbm, ACCENT)
+
+    def set_beacon(self, enable: bool):
+        if self.ser is None:
+            self.beacon_on_btn.setChecked(self._beacon_enabled)
+            self.beacon_off_btn.setChecked(not self._beacon_enabled)
+            return
+        self.beacon_on_btn.setChecked(enable)
+        self.beacon_off_btn.setChecked(not enable)
+        line = (("BEACON ON" if enable else "BEACON OFF") + "\r\n").encode("ascii")
+        try:
+            self.ser.write(line)
+        except serial.SerialException as e:
+            self.on_serial_error(str(e))
+            return
+        self.append_log("--- sent BEACON %s ---" % ("ON" if enable else "OFF"), ACCENT)
+
+    # ---------------------------------------------------------------
+    def current_payload_bytes(self):
+        """Returns (ok, payload_bytes_or_error_message)."""
+        text = self.input.text()
+        if self.hex_radio.isChecked():
+            cleaned = "".join(text.split()).replace("0x", "").replace("0X", "")
+            if len(cleaned) % 2 != 0:
+                return False, "hex string must have an even number of characters"
+            try:
+                payload = bytes.fromhex(cleaned)
+            except ValueError:
+                return False, "not valid hex (only 0-9/a-f allowed)"
+            return True, payload
+        else:
+            payload = text.encode("utf-8")
+            return True, payload
+
+    def update_byte_count(self):
+        ok, result = self.current_payload_bytes()
+        n = len(result) if ok else 0
+        over = n > MAX_PAYLOAD_BYTES
+        self.byte_count_label.setText("%d / %d bytes%s" % (n, MAX_PAYLOAD_BYTES, "  (TOO LONG)" if over else ""))
+        self.byte_count_label.setStyleSheet(f"color: {ERR};" if (over or not ok) else "")
+
+    def send_message(self):
+        if self.ser is None:
+            return
+        ok, result = self.current_payload_bytes()
+        if not ok:
+            QMessageBox.warning(self, "Bad input", result)
+            return
+        payload = result
+        if len(payload) == 0:
+            return
+        if self._send_payload(payload):
+            self.input.record_history(self.input.text())
+            self.input.clear()
+
+    def resend_last(self):
+        if self.last_sent_payload is not None:
+            self._send_payload(self.last_sent_payload)
+
+    def send_file(self):
+        if self.ser is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Select file to send")
+        if not path:
+            return
+        try:
+            with open(path, "rb") as f:
+                payload = f.read()
+        except OSError as e:
+            QMessageBox.critical(self, "Read failed", str(e))
+            return
+        if len(payload) > MAX_PAYLOAD_BYTES:
+            QMessageBox.warning(
+                self, "Too long",
+                "%s is %d bytes, exceeding the %d-byte S2S2 payload limit."
+                % (os.path.basename(path), len(payload), MAX_PAYLOAD_BYTES))
+            return
+        if self._send_payload(payload):
+            self.append_log("--- sent file %s (%d bytes) ---" % (os.path.basename(path), len(payload)), FG_DIM)
+
+    def _send_payload(self, payload: bytes) -> bool:
+        """Writes one TX <hex> command. Returns True on success."""
+        if len(payload) > MAX_PAYLOAD_BYTES:
+            QMessageBox.warning(self, "Too long",
+                                 "%d bytes exceeds the %d-byte S2S2 payload limit." % (len(payload), MAX_PAYLOAD_BYTES))
+            return False
+
+        hex_str = payload.hex()
+        line = ("TX " + hex_str + "\r\n").encode("ascii")
+        try:
+            self.ser.write(line)
+        except serial.SerialException as e:
+            self.on_serial_error(str(e))
+            return False
+
+        self.last_sent_payload = payload
+        self.resend_btn.setEnabled(True)
+        self.bytes_sent_total += len(payload)
+        self.messages_sent_total += 1
+        self.status.showMessage(
+            "Connected -- %d message(s) sent, %d byte(s) total"
+            % (self.messages_sent_total, self.bytes_sent_total))
+        self.append_log("--- sent %d byte(s) as TX %s ---" % (len(payload), hex_str), FG)
+        return True
+
+    def closeEvent(self, event):
+        self.disconnect_serial()
+        event.accept()
+
+
+def _hline():
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.HLine if PYQT_VERSION == 6 else QFrame.HLine)
+    line.setStyleSheet("color: #17251f;")
+    return line
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyleSheet(DARK_STYLESHEET)
+    win = MainWindow()
+    win.show()
+    sys.exit(run_app_exec(app))
+
+
+if __name__ == "__main__":
+    main()

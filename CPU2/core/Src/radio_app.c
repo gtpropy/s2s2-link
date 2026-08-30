@@ -2,7 +2,8 @@
 
 #include "radio_app.h"
 #include "radio_driver.h"
-#include "ax25.h"
+#include "s2s2com.h"
+#include "fx25.h"
 #include "uart_debug.h"
 
 extern void SUBGRF_SetBufferBaseAddress(
@@ -12,8 +13,39 @@ extern void SUBGRF_SetBufferBaseAddress(
 #define SUBGHZ_TX_BUFFER_BASE  0x00U
 #define SUBGHZ_RX_BUFFER_BASE  0x80U
 
+/* This is the NATIVE GMSK packet-engine path (hardware sync-word
+   detection, hardware CRC16, hardware whitening) -- a separate, still-
+   available transport from the AX.25/FX.25 path in cubus_ax25.h, which
+   does its own HDLC framing and FX.25 RS FEC and needs the radio driven
+   as a continuous raw bitstream instead (see config.h's AX.25/FX.25
+   LINK ADDRESSING section for that gap). Register write is always 8
+   bytes; only the low RADIO_SYNCWORD_LEN_BITS bits (this driver's
+   PacketParams.SyncWordLength field, taken as raw bits - see
+   radio_driver.c's SetPacketParams) are actually correlated against on
+   air. */
+#define RADIO_SYNCWORD_LEN_BYTES 4U
+#define RADIO_SYNCWORD_LEN_BITS  (RADIO_SYNCWORD_LEN_BYTES * 8U)
+static const uint8_t s_syncWordReg[8] = { 0x1A, 0xCF, 0xFC, 0x1D, 0x00, 0x00, 0x00, 0x00 };
+
 static RadioConfig_t s_config;
 static bool s_initialized = false;
+static int8_t s_tx_power_dbm = RADIO_TX_POWER_DBM;
+
+#define RADIO_TX_POWER_MIN_DBM (-9)
+#define RADIO_TX_POWER_MAX_DBM 22
+
+void RadioApp_SetTxPower(int8_t dbm)
+{
+    if (dbm < RADIO_TX_POWER_MIN_DBM) dbm = RADIO_TX_POWER_MIN_DBM;
+    if (dbm > RADIO_TX_POWER_MAX_DBM) dbm = RADIO_TX_POWER_MAX_DBM;
+    s_tx_power_dbm = dbm;
+    uart2_printf("RadioApp_SetTxPower: %d dBm\r\n", (int)s_tx_power_dbm);
+}
+
+int8_t RadioApp_GetTxPower(void)
+{
+    return s_tx_power_dbm;
+}
 
 static void RadioApp_ArmCommon(
     uint32_t channelHz);
@@ -74,7 +106,7 @@ void RadioApp_Init(
         RADIO_BIT_RATE_BPS);
 
     uart2_printf(
-        "Deviation = %d Hz\r\n",
+        "Deviation = %d Hz (GMSK, h=0.5)\r\n",
         RADIO_FDEV_HZ);
 
     /*
@@ -91,8 +123,8 @@ void RadioApp_Init(
         RADIO_BIT_RATE_BPS,
         0,
         RADIO_PREAMBLE_LENGTH_BITS / 8U,
-        true,
         false,
+        true,
         false,
         0,
         false,
@@ -112,18 +144,18 @@ void RadioApp_Init(
         RADIO_RX_BANDWIDTH_HZ,
         RADIO_PREAMBLE_LENGTH_BITS / 8U,
         0,
-        true,
-        0,
         false,
+        0,
+        true,
         false,
         0,
         false,
         true);
 
     /*
-     * Force exact SX126x GFSK packet parameters.
+     * Force exact SX126x GMSK packet parameters.
      */
-    RadioApp_ForceOpenGfskParams();
+    RadioApp_ForceRadioParams();
 
     uart2_printf(
         "RadioApp_Init: EXIT\r\n");
@@ -146,9 +178,9 @@ static void RadioApp_ArmCommon(
         SUBGHZ_RX_BUFFER_BASE);
 
     /*
-     * Restore GFSK packet parameters.
+     * Restore GMSK packet parameters.
      */
-    RadioApp_ForceOpenGfskParams();
+    RadioApp_ForceRadioParams();
 
     /*
      * Select frequency.
@@ -200,62 +232,72 @@ void RadioApp_Send(
     /* 2. Configure RF frequency */
     SUBGRF_SetRfFrequency(s_config.txFrequency);
 
-    /* 3. Configure packet parameters: pure G3RUH bitstream (no HW syncword or preamble) */
+    /* 3. Configure packet parameters: FIXED-length GMSK, hardware CRC and
+       whitening OFF -- this is what makes the transmitted bytes a real,
+       standards-compliant AX.25/FX.25 frame (fx25.h) instead of an
+       SX126x-proprietary one. A stock AX.25/FX.25 ground-station decoder
+       has no way to strip a chip-inserted length byte, an extra hardware
+       CRC, or Semtech's whitening scramble -- so all three must be off;
+       HDLC bit-stuffing (already applied by fx25_pack_data_field) is
+       what provides transition density instead of whitening. */
     PacketParams_t packetParams;
     memset(&packetParams, 0, sizeof(packetParams));
-    packetParams.PacketType = PACKET_TYPE_GFSK;
-    packetParams.Params.Gfsk.PreambleLength = 0;
-    packetParams.Params.Gfsk.PreambleMinDetect = RADIO_PREAMBLE_DETECTOR_OFF;
-    packetParams.Params.Gfsk.SyncWordLength = 0;
+    packetParams.PacketType = PACKET_TYPE_GMSK;
+    packetParams.Params.Gfsk.PreambleLength = RADIO_PREAMBLE_LENGTH_BITS;
+    packetParams.Params.Gfsk.PreambleMinDetect = RADIO_PREAMBLE_DETECTOR_16_BITS;
+    packetParams.Params.Gfsk.SyncWordLength = RADIO_SYNCWORD_LEN_BITS;
     packetParams.Params.Gfsk.AddrComp = RADIO_ADDRESSCOMP_FILT_OFF;
     packetParams.Params.Gfsk.HeaderType = RADIO_PACKET_FIXED_LENGTH;
-    packetParams.Params.Gfsk.PayloadLength = length;
+    packetParams.Params.Gfsk.PayloadLength = (uint8_t)length;
     packetParams.Params.Gfsk.CrcLength = RADIO_CRC_OFF;
     packetParams.Params.Gfsk.DcFree = RADIO_DC_FREE_OFF;
     SUBGRF_SetPacketParams(&packetParams);
 
-    /* 4. Configure modulation parameters (9600 baud, 2400 Hz Fdev, BT 0.5) */
+    /* 4. Configure modulation parameters (9600 baud, 2400 Hz Fdev, GMSK BT 0.3) */
     ModulationParams_t modParams;
     memset(&modParams, 0, sizeof(modParams));
-    modParams.PacketType = PACKET_TYPE_GFSK;
+    modParams.PacketType = PACKET_TYPE_GMSK;
     modParams.Params.Gfsk.BitRate = RADIO_BIT_RATE_BPS;
     modParams.Params.Gfsk.Fdev = RADIO_FDEV_HZ;
-    modParams.Params.Gfsk.ModulationShaping = MOD_SHAPING_G_BT_05;
+    modParams.Params.Gfsk.ModulationShaping = MOD_SHAPING_G_BT_03;
     modParams.Params.Gfsk.Bandwidth = SUBGRF_GetFskBandwidthRegValue(RADIO_RX_BANDWIDTH_HZ);
     SUBGRF_SetModulationParams(&modParams);
 
-    /* 5. Set High Power PA (+22 dBm) and 200us ramp time */
-    SUBGRF_SetPaConfig(0x04, 0x07, 0x00, 0x01);
-    SUBGRF_SetTxParams(RFO_HP, RADIO_TX_POWER_DBM, RADIO_RAMP_200_US);
+    /* 5. Hardware sync word (matches s2s2com.h WL55_SYNCWORD_BYTES) */
+    SUBGRF_SetSyncWord((uint8_t *)s_syncWordReg);
 
-    /* 6. Set RF switch to TX HP */
+    /* 6. Set High Power PA and 200us ramp time (power: see RadioApp_SetTxPower) */
+    SUBGRF_SetPaConfig(0x04, 0x07, 0x00, 0x01);
+    SUBGRF_SetTxParams(RFO_HP, s_tx_power_dbm, RADIO_RAMP_200_US);
+
+    /* 7. Set RF switch to TX HP */
     SUBGRF_SetSwitch(RFO_HP, RFSWITCH_TX);
 
-    /* 7. Set buffer base and write payload */
+    /* 8. Set buffer base and write payload */
     SUBGRF_SetBufferBaseAddress(SUBGHZ_TX_BUFFER_BASE, SUBGHZ_RX_BUFFER_BASE);
     SUBGRF_SetPayload(buffer, (uint8_t)length);
 
-    /* 8. Enable TX IRQs */
+    /* 9. Enable TX IRQs */
     SUBGRF_SetDioIrqParams(
         IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
         IRQ_TX_DONE | IRQ_RX_TX_TIMEOUT,
         IRQ_RADIO_NONE,
         IRQ_RADIO_NONE);
 
-    /* 9. Clear IRQs */
+    /* 10. Clear IRQs */
     SUBGRF_ClearIrqStatus(IRQ_RADIO_ALL);
 
-    /* 10. Start transmission */
+    /* 11. Start transmission */
     SUBGRF_SetTx(0);
 }
 
 /*
  * ============================================================
- * GFSK PACKET PARAMETERS
+ * GMSK PACKET PARAMETERS
  * ============================================================
  */
 
-void RadioApp_ForceOpenGfskParams(void)
+void RadioApp_ForceRadioParams(void)
 {
     Radio.Standby();
 
@@ -267,20 +309,16 @@ void RadioApp_ForceOpenGfskParams(void)
         sizeof(packetParams));
 
     packetParams.PacketType =
-        PACKET_TYPE_GFSK;
+        PACKET_TYPE_GMSK;
 
-    /*
-     * V1.4 Reference: Pure G3RUH bitstream mode.
-     * No hardware syncword or preamble to interfere with audio G3RUH framing.
-     */
     packetParams.Params.Gfsk.PreambleLength =
-        0;
+        RADIO_PREAMBLE_LENGTH_BITS;
 
     packetParams.Params.Gfsk.PreambleMinDetect =
-        RADIO_PREAMBLE_DETECTOR_OFF;
+        RADIO_PREAMBLE_DETECTOR_16_BITS;
 
     packetParams.Params.Gfsk.SyncWordLength =
-        0;
+        RADIO_SYNCWORD_LEN_BITS;
 
     packetParams.Params.Gfsk.AddrComp =
         RADIO_ADDRESSCOMP_FILT_OFF;
@@ -288,19 +326,26 @@ void RadioApp_ForceOpenGfskParams(void)
     /*
      * FIXED LENGTH:
      *
-     * Every SX126x payload is exactly RADIO_FIXED_PACKET_LEN
-     * bytes.
+     * Every frame this firmware sends or expects to receive is exactly
+     * FX25_FRAME_LEN (168) bytes -- the whole point of AX.25/FX.25
+     * compatibility is that frame boundaries come from HDLC flags inside
+     * the payload, not a chip-inserted length byte a stock ground
+     * station wouldn't know to strip. Both TX and RX must agree on this
+     * same fixed length in advance, which they do (it's a compile-time
+     * constant from fx25.h).
      */
     packetParams.Params.Gfsk.HeaderType =
         RADIO_PACKET_FIXED_LENGTH;
 
-    packetParams.Params.Gfsk.PayloadLength =
-        RADIO_FIXED_PACKET_LEN;
+    packetParams.Params.Gfsk.PayloadLength = FX25_FRAME_LEN;
 
     /*
      * Hardware CRC OFF.
      *
-     * AX.25 supplies the FCS.
+     * AX.25's own FCS (ax25.c) plus FX.25's RS(255,223)-shortened FEC
+     * (fx25.c) already cover integrity/correction; a stock AX.25/FX.25
+     * decoder has no idea an extra hardware CRC16 would be appended and
+     * doesn't need one.
      */
     packetParams.Params.Gfsk.CrcLength =
         RADIO_CRC_OFF;
@@ -308,7 +353,11 @@ void RadioApp_ForceOpenGfskParams(void)
     /*
      * Hardware whitening OFF.
      *
-     * G3RUH is performed in software.
+     * A stock ground station has no way to de-whiten Semtech's
+     * proprietary whitening sequence. HDLC bit-stuffing
+     * (fx25_pack_data_field) provides the bit-transition density for
+     * GMSK clock/data recovery instead -- the same role G3RUH scrambling
+     * plays in classic AX.25 hardware.
      */
     packetParams.Params.Gfsk.DcFree =
         RADIO_DC_FREE_OFF;
@@ -317,7 +366,7 @@ void RadioApp_ForceOpenGfskParams(void)
         &packetParams);
 
     /*
-     * Modulation parameters (9600 baud standard).
+     * Modulation parameters (9600 baud, GMSK h=0.5 BT=0.3).
      */
     ModulationParams_t modParams;
 
@@ -327,7 +376,7 @@ void RadioApp_ForceOpenGfskParams(void)
         sizeof(modParams));
 
     modParams.PacketType =
-        PACKET_TYPE_GFSK;
+        PACKET_TYPE_GMSK;
 
     modParams.Params.Gfsk.BitRate =
         RADIO_BIT_RATE_BPS;
@@ -336,7 +385,7 @@ void RadioApp_ForceOpenGfskParams(void)
         RADIO_FDEV_HZ;
 
     modParams.Params.Gfsk.ModulationShaping =
-        MOD_SHAPING_G_BT_05;
+        MOD_SHAPING_G_BT_03;
 
     modParams.Params.Gfsk.Bandwidth =
         SUBGRF_GetFskBandwidthRegValue(
@@ -346,10 +395,17 @@ void RadioApp_ForceOpenGfskParams(void)
         &modParams);
 
     /*
-     * Configure High Power PA (+22 dBm) and PA Ramp Time (200 us).
+     * Hardware sync word - lets the radio's own
+     * sync detector find frame boundaries in hardware.
+     */
+    SUBGRF_SetSyncWord((uint8_t *)s_syncWordReg);
+
+    /*
+     * Configure High Power PA and PA Ramp Time (200 us).
+     * Power: see RadioApp_SetTxPower / s_tx_power_dbm.
      */
     SUBGRF_SetPaConfig(0x04, 0x07, 0x00, 0x01);
-    SUBGRF_SetTxParams(RFO_HP, RADIO_TX_POWER_DBM, RADIO_RAMP_200_US);
+    SUBGRF_SetTxParams(RFO_HP, s_tx_power_dbm, RADIO_RAMP_200_US);
 }
 
 /*

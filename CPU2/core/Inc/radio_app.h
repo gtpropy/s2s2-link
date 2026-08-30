@@ -21,7 +21,7 @@ extern "C" {
     arguments.
 
     TX and RX now share one identical arming sequence
-    (RadioApp_ForceOpenGfskParams + buffer base + channel) -
+    (RadioApp_ForceRadioParams + buffer base + channel) -
     see radio_app.c. The ONLY difference between the transmit
     path and the receive path anywhere in this file is the
     single final driver call: Radio.Send(...) vs Radio.Rx(0).
@@ -35,25 +35,36 @@ void RadioApp_Init(
 /* Arms RX: identical shared setup, then Radio.Rx(0). */
 void RadioApp_StartRx(void);
 
-/* Sends one frame: identical shared setup, then Radio.Send(). */
+/* Sends one native radio packet (<=255B):
+   identical shared setup, then Radio.Send(). */
 void RadioApp_Send(
     uint8_t *buffer,
     uint16_t length);
 
 void RadioApp_Sleep(void);
 
-/* Forces sync word + fixed-length GFSK PacketParams directly on the
-   SX126x (CRC off, whitening off, symmetric preamble/sync). MUST
-   produce the identical chip state on satellite and ground station.
+/* Forces variable-length GMSK PacketParams directly on the SX126x
+   (hardware sync word, hardware CRC16-CCITT, whitening on).
+   MUST produce the identical chip state on satellite and ground station.
    Called internally by RadioApp_Send()/StartRx()/ResumeRx() as the
    last SPI write before Send/Rx - you normally do not call this
-   yourself. Always configures fixed-length mode; there is no
-   variable-length mode in this protocol anymore. */
-void RadioApp_ForceOpenGfskParams(void);
+   yourself. */
+void RadioApp_ForceRadioParams(void);
 
 /* Cheap re-arm for repeated listen-window loops - goes through the
    same shared setup as RadioApp_StartRx(). */
 void RadioApp_ResumeRx(void);
+
+/* Overrides the TX power (dBm) used by RadioApp_Send()/ForceRadioParams()
+   from here on, clamped to the SX126x HP-PA range [-9, 22]. Defaults to
+   RADIO_TX_POWER_DBM (config.h) at boot. Intended for DEBUG_BUILD bench
+   testing at short range, where +22 dBm saturates most receiver front
+   ends regardless of FEC strength -- NOT a substitute for a real link
+   budget. Production builds do not expose a way to call this at runtime. */
+void RadioApp_SetTxPower(int8_t dbm);
+
+/* Returns the TX power currently in effect (see RadioApp_SetTxPower). */
+int8_t RadioApp_GetTxPower(void);
 
 #ifdef __cplusplus
 }

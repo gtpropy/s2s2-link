@@ -21,6 +21,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "radio_board_if.h"
 #include "stm32wlxx_hal.h"
+#include "uart_debug.h"
+#include "board_pins.h"
 
 /* USER CODE BEGIN Includes */
 
@@ -64,43 +66,41 @@ int32_t RBI_Init(void)
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOC_CLK_ENABLE();
 
-    /*
-     * Custom Satellite Front-End:
-     *   PA8 = External PA Enable
-     *   PA1 = External LNA Enable
-     */
-    GPIO_InitStruct.Pin = GPIO_PIN_8 | GPIO_PIN_1;
+#ifdef BOARD_HAS_EXTRA_FRONTEND_PINS
+    GPIO_InitStruct.Pin = BOARD_EXTRA_PIN_A | BOARD_EXTRA_PIN_B;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+    HAL_GPIO_Init(BOARD_EXTRA_GPIO_PORT, &GPIO_InitStruct);
+#endif
 
-    /*
-     * STM32WL55 Nucleo Board RF Switch:
-     *   PC4 = FE_CTRL1
-     *   PC5 = FE_CTRL2
-     *   PC3 = FE_CTRL3
-     */
-    GPIO_InitStruct.Pin = GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_5;
+    /* RF switch (FE_CTRL1/2/3) -- same pins on every board variant. */
+    GPIO_InitStruct.Pin = BOARD_FE_CTRL_ALL_PINS;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+    HAL_GPIO_Init(BOARD_FE_CTRL_GPIO_PORT, &GPIO_InitStruct);
 
     /* Default: All OFF */
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8 | GPIO_PIN_1, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
+#ifdef BOARD_HAS_EXTRA_FRONTEND_PINS
+    HAL_GPIO_WritePin(BOARD_EXTRA_GPIO_PORT, BOARD_EXTRA_PIN_A | BOARD_EXTRA_PIN_B, GPIO_PIN_RESET);
+#endif
+    HAL_GPIO_WritePin(BOARD_FE_CTRL_GPIO_PORT, BOARD_FE_CTRL_ALL_PINS, GPIO_PIN_RESET);
 
     return 0;
 }
 
 int32_t RBI_DeInit(void)
 {
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8 | GPIO_PIN_1, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
+#ifdef BOARD_HAS_EXTRA_FRONTEND_PINS
+    HAL_GPIO_WritePin(BOARD_EXTRA_GPIO_PORT, BOARD_EXTRA_PIN_A | BOARD_EXTRA_PIN_B, GPIO_PIN_RESET);
+#endif
+    HAL_GPIO_WritePin(BOARD_FE_CTRL_GPIO_PORT, BOARD_FE_CTRL_ALL_PINS, GPIO_PIN_RESET);
 
-    HAL_GPIO_DeInit(GPIOA, GPIO_PIN_8 | GPIO_PIN_1);
-    HAL_GPIO_DeInit(GPIOC, GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_5);
+#ifdef BOARD_HAS_EXTRA_FRONTEND_PINS
+    HAL_GPIO_DeInit(BOARD_EXTRA_GPIO_PORT, BOARD_EXTRA_PIN_A | BOARD_EXTRA_PIN_B);
+#endif
+    HAL_GPIO_DeInit(BOARD_FE_CTRL_GPIO_PORT, BOARD_FE_CTRL_ALL_PINS);
 
     return 0;
 }
@@ -112,48 +112,56 @@ int32_t RBI_ConfigRFSwitch(RBI_Switch_TypeDef Config)
     case RBI_SWITCH_RFO_HP:
         uart2_puts("RFSWITCH TX HP\r\n");
 
-        /* Custom PA ON, LNA OFF */
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
+#ifdef BOARD_HAS_EXTRA_FRONTEND_PINS
+        /* External PA/rail A ON, rail B OFF */
+        HAL_GPIO_WritePin(BOARD_EXTRA_GPIO_PORT, BOARD_EXTRA_PIN_A, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(BOARD_EXTRA_GPIO_PORT, BOARD_EXTRA_PIN_B, GPIO_PIN_RESET);
+#endif
 
-        /* Nucleo RF Switch -> TX HP to SMA: CTRL3=1, CTRL1=0, CTRL2=1 */
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_SET);
+        /* RF Switch -> TX HP to SMA: CTRL3=1, CTRL1=0, CTRL2=1 */
+        HAL_GPIO_WritePin(BOARD_FE_CTRL_GPIO_PORT, BOARD_FE_CTRL3_PIN, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(BOARD_FE_CTRL_GPIO_PORT, BOARD_FE_CTRL1_PIN, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BOARD_FE_CTRL_GPIO_PORT, BOARD_FE_CTRL2_PIN, GPIO_PIN_SET);
         break;
 
     case RBI_SWITCH_RFO_LP:
         uart2_puts("RFSWITCH TX LP\r\n");
 
-        /* Custom PA ON, LNA OFF */
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_RESET);
+#ifdef BOARD_HAS_EXTRA_FRONTEND_PINS
+        /* External PA/rail A ON, rail B OFF */
+        HAL_GPIO_WritePin(BOARD_EXTRA_GPIO_PORT, BOARD_EXTRA_PIN_A, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(BOARD_EXTRA_GPIO_PORT, BOARD_EXTRA_PIN_B, GPIO_PIN_RESET);
+#endif
 
-        /* Nucleo RF Switch -> TX LP to SMA: CTRL3=1, CTRL1=1, CTRL2=1 */
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_SET);
+        /* RF Switch -> TX LP to SMA: CTRL3=1, CTRL1=1, CTRL2=1 */
+        HAL_GPIO_WritePin(BOARD_FE_CTRL_GPIO_PORT, BOARD_FE_CTRL3_PIN, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(BOARD_FE_CTRL_GPIO_PORT, BOARD_FE_CTRL1_PIN, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(BOARD_FE_CTRL_GPIO_PORT, BOARD_FE_CTRL2_PIN, GPIO_PIN_SET);
         break;
 
     case RBI_SWITCH_RX:
         uart2_puts("RFSWITCH RX\r\n");
 
-        /* Custom PA OFF, LNA ON */
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, GPIO_PIN_SET);
+#ifdef BOARD_HAS_EXTRA_FRONTEND_PINS
+        /* External PA/rail A OFF, rail B ON */
+        HAL_GPIO_WritePin(BOARD_EXTRA_GPIO_PORT, BOARD_EXTRA_PIN_A, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(BOARD_EXTRA_GPIO_PORT, BOARD_EXTRA_PIN_B, GPIO_PIN_SET);
+#endif
 
-        /* Nucleo RF Switch -> RX from SMA: CTRL3=1, CTRL1=1, CTRL2=0 */
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, GPIO_PIN_RESET);
+        /* RF Switch -> RX from SMA: CTRL3=1, CTRL1=1, CTRL2=0 */
+        HAL_GPIO_WritePin(BOARD_FE_CTRL_GPIO_PORT, BOARD_FE_CTRL3_PIN, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(BOARD_FE_CTRL_GPIO_PORT, BOARD_FE_CTRL1_PIN, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(BOARD_FE_CTRL_GPIO_PORT, BOARD_FE_CTRL2_PIN, GPIO_PIN_RESET);
         break;
 
     case RBI_SWITCH_OFF:
     default:
         uart2_puts("RFSWITCH OFF\r\n");
 
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8 | GPIO_PIN_1, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3 | GPIO_PIN_4 | GPIO_PIN_5, GPIO_PIN_RESET);
+#ifdef BOARD_HAS_EXTRA_FRONTEND_PINS
+        HAL_GPIO_WritePin(BOARD_EXTRA_GPIO_PORT, BOARD_EXTRA_PIN_A | BOARD_EXTRA_PIN_B, GPIO_PIN_RESET);
+#endif
+        HAL_GPIO_WritePin(BOARD_FE_CTRL_GPIO_PORT, BOARD_FE_CTRL_ALL_PINS, GPIO_PIN_RESET);
         break;
     }
 
