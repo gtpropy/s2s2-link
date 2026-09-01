@@ -14,12 +14,18 @@
  *
  * Wire layout, all multi-byte fields big-endian:
  *
- *   TYPE_TELECOMMAND payload : [opcode][subsystem][data_id][address(4)][num_packets(2)]  (9 bytes, cubus_command_t)
+ *   TYPE_TELECOMMAND payload : [opcode][subsystem][data_id][address(4)][num_packets(2)]
+ *                              [counter(4)][mac(8)]  (21 bytes, cubus_command_t --
+ *                              counter+mac are s2s2_auth.h's anti-spoof/anti-replay
+ *                              layer; see that header before touching this format)
  *   TYPE_ACK payload         : [status][data_id][acked_seq(2)]                            (4 bytes, cubus_ack_t)
  *   TYPE_TELEMETRY payload   : [data_id][ ... one of the structs below ... ]
  *
  * Bare C: no malloc, no libc dependency beyond stdint.h / string.h.
- */
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-30
+*/
 #ifndef S2S2_COMMANDS_H
 #define S2S2_COMMANDS_H
 
@@ -90,6 +96,7 @@ typedef enum {
     ACK_STATUS_INVALID_COMMAND  = 0x09,
     ACK_STATUS_MEMORY_ERROR     = 0x0A,
     ACK_STATUS_TX_FAILED        = 0x0B,
+    ACK_STATUS_AUTH_FAILED      = 0x0C,  /* bad MAC or replayed/stale counter, see s2s2_auth.h */
 } cubus_ack_status_t;
 
 /* Human-readable status string, for logging. Never returns NULL. */
@@ -99,7 +106,12 @@ const char *ack_status_str(uint8_t status);
  * Command packet -- TYPE_TELECOMMAND payload
  * ===================================================================== */
 
-#define COMMAND_PAYLOAD_LEN 9
+/* 9 base fields + 4-byte anti-replay counter + 8-byte SipHash-2-4 MAC
+   (see s2s2_auth.h) -- every TYPE_TELECOMMAND payload is authenticated,
+   no unsigned command variant exists. */
+#define COMMAND_AUTH_LEN     12  /* counter(4) + mac(8) */
+#define COMMAND_SIGNED_LEN   13  /* opcode..counter, what actually gets MACed */
+#define COMMAND_PAYLOAD_LEN  21  /* 9 base + 12 auth */
 
 typedef struct {
     uint8_t  opcode;        /* cubus_cmd_t */
@@ -107,6 +119,8 @@ typedef struct {
     uint8_t  data_id;       /* cubus_data_id_t, 0 if not applicable */
     uint32_t address;       /* file/memory address for DOWNLOAD_FILE, 0 otherwise */
     uint16_t num_packets;   /* fragment count requested, 0 if not applicable */
+    uint32_t counter;       /* anti-replay, ground-station-assigned, see s2s2_auth.h */
+    uint8_t  mac[8];        /* SipHash-2-4 over src_id/dst_id + the fields above */
 } cubus_command_t;
 
 void command_pack(const cubus_command_t *cmd, uint8_t out[COMMAND_PAYLOAD_LEN]);

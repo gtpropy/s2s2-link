@@ -1,3 +1,10 @@
+/*
+ * radio_app.c
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-21
+ */
+
 #include <string.h>
 
 #include "radio_app.h"
@@ -289,6 +296,29 @@ void RadioApp_Send(
 
     /* 11. Start transmission */
     SUBGRF_SetTx(0);
+}
+
+/*
+ * ============================================================
+ * RAW CARRIER (CW) -- for cw_beacon.h, not the GMSK packet path
+ * ============================================================
+ */
+
+void RadioApp_KeyCw(bool on)
+{
+    if (!s_initialized) return;
+
+    if (on) {
+        Radio.Standby();
+        SUBGRF_SetRfFrequency(s_config.txFrequency);
+        /* Radio.TxCw (radio.c's RadioTxCw) handles PA select/config and
+           the RF switch internally via SUBGRF_SetRfTxPower -- unlike the
+           GMSK path above, no separate SetPaConfig/SetTxParams call is
+           needed here. */
+        Radio.TxCw(s_tx_power_dbm);
+    } else {
+        Radio.Standby();
+    }
 }
 
 /*

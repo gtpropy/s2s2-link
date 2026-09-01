@@ -1,3 +1,10 @@
+/*
+ * config.h
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-21
+ */
+
 #ifndef CONFIG_H
 #define CONFIG_H
 

@@ -12,7 +12,10 @@
  * SX1278's DIO2 IRQ input, so driving it as a push-pull output there would
  * fight that chip. That mismatch is exactly why this needs to be a per-board
  * table instead of one hardcoded set of literals.
- */
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-30
+*/
 #ifndef BOARD_PINS_H
 #define BOARD_PINS_H
 

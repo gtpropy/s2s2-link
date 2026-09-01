@@ -1,3 +1,10 @@
+/*
+ * radio_app.h
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-21
+ */
+
 #ifndef RADIO_APP_H
 #define RADIO_APP_H
 
@@ -65,6 +72,16 @@ void RadioApp_SetTxPower(int8_t dbm);
 
 /* Returns the TX power currently in effect (see RadioApp_SetTxPower). */
 int8_t RadioApp_GetTxPower(void);
+
+/* Keys the raw RF carrier on/off at the current TX power and frequency,
+   with NO modulation of any kind -- for real, listenable-by-ear Morse CW
+   beaconing (cw_beacon.h), a third distinct radio mode alongside the
+   normal GMSK Send/Rx path above. on=true leaves the chip transmitting
+   an unmodulated tone until this is called again with on=false
+   (Radio.Standby()) -- there is no auto-timeout. Caller must call
+   RadioApp_StartRx() afterward to resume normal GMSK listening; CW
+   keying does not return to Rx by itself, same as RadioApp_Send. */
+void RadioApp_KeyCw(bool on);
 
 #ifdef __cplusplus
 }

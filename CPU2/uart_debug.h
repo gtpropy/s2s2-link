@@ -13,7 +13,11 @@
  * Function names are kept as uart2_* for compatibility with
  * the existing M0+ application.
  *
- ****************************************************************************/
+ ***************************************************************************
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-21
+*/
 
 #ifndef UART_DEBUG_H
 #define UART_DEBUG_H

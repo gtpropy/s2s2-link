@@ -1,3 +1,5 @@
+# @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+# @date   2026-08-30
 """
 s2s2_decoder.py -- pure-Python receive-side decode engine for the S2S2
 AX.25/FX.25 link, ported line-for-line from the CPU2 firmware C sources

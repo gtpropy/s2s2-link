@@ -2,7 +2,10 @@
  * stm32wlxx_it.c
  *
  * Minimal interrupt handler file for CPU2 (M0+).
- */
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-21
+*/
 
 #include "stm32wlxx_hal.h"
 

@@ -9,7 +9,10 @@
  *   clang -std=c11 -Wall -Wextra -O2 -I ../Inc -o /tmp/test_s2s2 \
  *         rs.c ax25.c fx25.c cubus_ax25.c cubus_proto.c tx_history.c test_roundtrip.c
  *   /tmp/test_s2s2
- */
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-21
+*/
 #include "s2s2com.h"
 #include "ax25.h"
 #include "fx25.h"

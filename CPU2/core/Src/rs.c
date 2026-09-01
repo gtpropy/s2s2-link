@@ -4,7 +4,10 @@
  * Systematic encode via generator-polynomial division (LFSR-style byte loop).
  * Decode via syndromes -> Berlekamp-Massey (Massey's LFSR synthesis) ->
  * Chien search -> Forney error-value formula. Bare C, no malloc.
- */
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-30
+*/
 #include <string.h>
 #include "s2s2com.h"
 

@@ -1,23 +1,35 @@
 #!/usr/bin/env python3
+# @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+# @date   2026-08-30
 """
 s2s2_tx_gui.py -- PyQt "backdoor" control panel for the Nucleo-WL55JC over
-its USB-serial debug UART: raw TX <hex>, TX power override, and beacon
-on/off, all DEBUG_BUILD-only firmware commands (see ipcc_m0plus_main.c /
-satellite/gs_main.c, Process_UART_Command). A production-built board
-answers every one of these with "UNKNOWN COMMAND" -- see the architecture
-README section 9.1. This tool has no privileged access of its own; it is
-exactly as powerful as the firmware it's talking to lets it be, no more.
+its USB-serial debug UART: raw TX <hex>, TX power override, beacon on/off,
+a full Command Center for the ground station's real CLI keywords
+(satellite/gs_main.c), and an audible Morse sidetone reproduction of any
+CW beacon the satellite reports sending.
+
+DEBUG_BUILD-only commands (TX/POWER/BEACON) get "UNKNOWN COMMAND" from a
+production-built board -- see the architecture README section 9.1. The
+Command Center buttons are the ground station's REAL, always-available
+CLI keywords (work on either build) -- this tool has no privileged access
+of its own; it is exactly as powerful as the firmware it's talking to
+lets it be, no more.
 
 Commands sent:
-    TX <hex>       -- transmit arbitrary bytes downlink as TYPE_RAW
-    POWER <dbm>     -- override TX power (-9..22 dBm, SX126x HP-PA range)
-    BEACON ON/OFF   -- toggle the satellite's 5s housekeeping beacon
+    TX <hex>        -- transmit arbitrary bytes downlink as TYPE_RAW (DEBUG_BUILD)
+    POWER <dbm>      -- override TX power, -9..22 dBm (DEBUG_BUILD)
+    BEACON ON/OFF    -- toggle all satellite beaconing (DEBUG_BUILD)
+    COMMAND, HEARTBEAT, HEALTH, HOUSEKEEPING, BEACON1, BEACON2, ADCS,
+    CAMERA, DOWNLOAD, SATLOG, DIGIPEATER, RETRANSMIT, ABORT
+                     -- the ground station's real always-on CLI keywords
 
 Works with either PyQt5 or PyQt6 (whichever is installed), pyserial, and
-pyqtgraph (for the TX-activity graph).
+pyqtgraph (for the TX-activity graph). CW sidetone playback additionally
+needs sounddevice (optional -- the checkbox just does nothing useful
+without it, doesn't crash the GUI).
 
 Install:
-    pip install pyserial pyqtgraph PyQt6      # or PyQt5
+    pip install pyserial pyqtgraph PyQt6 sounddevice     # or PyQt5
 
 Run:
     python3 s2s2_tx_gui.py
@@ -28,29 +40,43 @@ Usage:
        if the firmware was built with -DUART_DEBUG_BAUD_9600).
     2. Click Connect.
     3. Type a message (Text mode encodes it as UTF-8 automatically) or
-       paste raw hex bytes (Hex mode), then click Send / press Enter.
+       paste raw hex bytes (Hex mode), then click Send / press Enter --
+       this is the raw DEBUG_BUILD "TX <hex>" backdoor.
        Up/Down arrow in the input box recalls previously sent messages.
        "Resend last" repeats the most recent payload with one click.
        "Send file..." reads a local file's raw bytes and sends them
        (rejected up front if it's over the 659-byte payload limit).
-    4. The "Radio Control" panel: drag the power slider and click Apply to
-       send POWER <dbm> (clamped -9..22, the SX126x HP-PA's real range);
-       toggle Beacon ON/OFF to silence or resume the satellite's automatic
-       5s beacon (useful for isolating an RF capture to only what you send
-       manually). Both reflect the firmware's own confirmation reply, not
-       just what you clicked -- if the board is running a production
-       build neither will ever confirm, since it doesn't know either
-       command.
-    5. The "TX Activity" graph parses the firmware's own log lines (not
-       just what this GUI sent) for every actual radio transmission --
-       "RadioApp_Send: len=N" fires for beacons, bursts, and manual TX
-       alike -- and plots frames/sec and cumulative bytes sent live, so
-       you can see real downlink activity even when it wasn't this GUI
-       that triggered it.
-    6. Anything the Nucleo prints shows up in the log pane, color-coded:
+    4. "Command Center": one button per real ground-station CLI keyword
+       (COMMAND requests a telemetry burst; HEARTBEAT/HEALTH/HOUSEKEEPING/
+       BEACON1/BEACON2/ADCS/SATLOG query the satellite; CAMERA/DOWNLOAD/
+       DIGIPEATER start a mission; RETRANSMIT asks for gapped frames back;
+       ABORT stops whatever mission is active). These work on a
+       production-built board too -- they're the satellite's real command
+       set, not a debug backdoor.
+    5. "Radio Control" (DEBUG_BUILD only): drag the power slider and click
+       Apply to send POWER <dbm> (clamped -9..22, the SX126x HP-PA's real
+       range); toggle Beacon ON/OFF to silence or resume ALL of the
+       satellite's automatic beaconing (5s text ping, 60s CW, 30s
+       Beacon1/2). Both reflect the firmware's own confirmation reply,
+       not just what you clicked.
+    6. "CW Sidetone": when checked, and the satellite reports sending a
+       CW beacon ("CW BEACON TX: ..." log line), this GUI SYNTHESIZES and
+       plays an audible Morse reproduction of that exact message, timed
+       to match the firmware's own cw_beacon.c table (see tools/morse.py)
+       -- this is a simulated playback of what was just transmitted, not
+       a live over-the-air recording (for that, use s2s2_rx_gui.py's real
+       envelope-detected CW Monitor against an actual receiver). WPM,
+       sidetone pitch, and volume are all adjustable; "Test tone" plays a
+       sample phrase immediately without waiting for a real beacon.
+    7. "TX Activity" parses the firmware's own log lines (not just what
+       this GUI sent) for every actual radio transmission -- so you see
+       real downlink activity even when it wasn't this GUI that
+       triggered it.
+    8. Anything the Nucleo prints shows up in the log pane, color-coded:
        green for what you sent and "OK ..." replies, red for "ERR"/"FAIL"
-       lines, gray for connect/disconnect notices. The status bar tracks
-       total messages/bytes sent this session.
+       lines, gray for connect/disconnect notices. Timestamp and
+       autoscroll are both toggleable. The status bar tracks total
+       messages/bytes sent this session.
 """
 
 import os
@@ -64,9 +90,9 @@ try:
     from PyQt6.QtGui import QFont, QTextCursor, QTextCharFormat, QColor
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-        QComboBox, QPushButton, QLineEdit, QPlainTextEdit, QLabel,
+        QGridLayout, QComboBox, QPushButton, QLineEdit, QPlainTextEdit, QLabel,
         QRadioButton, QButtonGroup, QMessageBox, QStatusBar, QFileDialog,
-        QSplitter, QGroupBox, QSlider, QCheckBox, QFrame,
+        QSplitter, QGroupBox, QSlider, QCheckBox, QFrame, QDoubleSpinBox, QSpinBox,
     )
     PYQT_VERSION = 6
 except ImportError:
@@ -74,9 +100,9 @@ except ImportError:
     from PyQt5.QtGui import QFont, QTextCursor, QTextCharFormat, QColor
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-        QComboBox, QPushButton, QLineEdit, QPlainTextEdit, QLabel,
+        QGridLayout, QComboBox, QPushButton, QLineEdit, QPlainTextEdit, QLabel,
         QRadioButton, QButtonGroup, QMessageBox, QStatusBar, QFileDialog,
-        QSplitter, QGroupBox, QSlider, QCheckBox, QFrame,
+        QSplitter, QGroupBox, QSlider, QCheckBox, QFrame, QDoubleSpinBox, QSpinBox,
     )
     PYQT_VERSION = 5
 
@@ -84,6 +110,10 @@ import numpy as np
 import pyqtgraph as pg
 import serial
 import serial.tools.list_ports
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import morse
+from audio_player import AudioPlayer
 
 MAX_PAYLOAD_BYTES = 659  # s2s2com.h MAX_PAYLOAD_LEN -- cubus_ax25_fragment's ceiling
 BAUD_RATES = [9600, 115200]
@@ -93,6 +123,25 @@ MAX_POWER_DBM = 22
 DEFAULT_POWER_DBM = 22  # config.h RADIO_TX_POWER_DBM, the production default
 ACTIVITY_WINDOW_S = 90   # rolling window kept for the TX-activity graph
 ACTIVITY_BIN_S = 1.0     # bin width for the frames/sec bar
+CW_AUDIO_SAMPLE_RATE = 8000
+
+# The ground station's real, always-available CLI keywords (satellite/gs_main.c,
+# grep str_ieq(command, ...)) -- label, keyword, tooltip.
+CLI_COMMANDS = [
+    ("Request burst", "COMMAND", "CMD_REQUEST_BURST -- request a telemetry burst"),
+    ("Heartbeat", "HEARTBEAT", "CMD_HEARTBEAT -- liveness check"),
+    ("Health", "HEALTH", "CMD_GET_HEALTH"),
+    ("Housekeeping", "HOUSEKEEPING", "CMD_GET_HOUSEKEEPING"),
+    ("Beacon 1", "BEACON1", "CMD_GET_BEACON1 -- power/battery/thermal"),
+    ("Beacon 2", "BEACON2", "CMD_GET_BEACON2 -- solar/ADCS"),
+    ("ADCS", "ADCS", "CMD_GET_ADCS"),
+    ("Camera", "CAMERA", "CMD_RUN_CAMERA mission"),
+    ("Download", "DOWNLOAD", "CMD_DOWNLOAD_FILE mission"),
+    ("Sat log", "SATLOG", "CMD_GET_SAT_LOG"),
+    ("Digipeater", "DIGIPEATER", "CMD_DIGIPEATER -- start the digipeater mission (DPM_ARCHITECTURE.md)"),
+    ("Retransmit", "RETRANSMIT", "CMD_REQUEST_RETRANSMIT -- resend gapped tx_history frames"),
+    ("Abort mission", "ABORT", "CMD_ABORT_MISSION -- stop whatever mission is active"),
+]
 
 _END_MOVE = QTextCursor.MoveOperation.End if PYQT_VERSION == 6 else QTextCursor.End
 
@@ -117,7 +166,7 @@ QPushButton:hover {{ background-color: #143528; border-color: {ACCENT}; }}
 QPushButton:pressed {{ background-color: #1c4a37; }}
 QPushButton:disabled {{ color: #2a4038; border-color: #17251f; }}
 QPushButton:checked {{ background-color: #1c4a37; border-color: {WARN}; color: {WARN}; }}
-QLineEdit, QComboBox, QPlainTextEdit {{
+QLineEdit, QComboBox, QPlainTextEdit, QSpinBox, QDoubleSpinBox {{
     background-color: {PANEL}; border: 1px solid #17251f; color: {FG}; selection-background-color: #1c4a37; }}
 QCheckBox, QRadioButton {{ color: {FG}; }}
 QStatusBar {{ background-color: {PANEL}; color: {FG_DIM}; }}
@@ -135,6 +184,7 @@ _RE_RADIO_SEND = re.compile(r"RadioApp_Send: len=(\d+)")
 _RE_BEACON_TICK = re.compile(r"BEACON TX")
 _RE_POWER_ACK = re.compile(r"RadioApp_SetTxPower:\s*(-?\d+)\s*dBm")
 _RE_BEACON_STATE = re.compile(r"^BEACON (ON|OFF)$")
+_RE_CW_BEACON = re.compile(r'CW BEACON TX: "([^"]*)"')
 
 
 def run_app_exec(app):
@@ -294,7 +344,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("S2S2 Nucleo TX -- Debug Backdoor Console")
-        self.resize(1200, 760)
+        self.resize(1360, 820)
 
         self.ser = None
         self.reader = None
@@ -304,6 +354,9 @@ class MainWindow(QMainWindow):
         self._line_buf = ""
         self._current_power_dbm = DEFAULT_POWER_DBM
         self._beacon_enabled = True
+        self._show_timestamps = False
+        self._autoscroll = True
+        self._audio = AudioPlayer(sample_rate=CW_AUDIO_SAMPLE_RATE)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -332,9 +385,19 @@ class MainWindow(QMainWindow):
         conn_row.addWidget(self.connect_btn)
 
         conn_row.addStretch(1)
+
+        self.timestamp_check = QCheckBox("Timestamps")
+        self.timestamp_check.toggled.connect(self._on_timestamp_toggled)
+        conn_row.addWidget(self.timestamp_check)
+
+        self.autoscroll_check = QCheckBox("Autoscroll")
+        self.autoscroll_check.setChecked(True)
+        self.autoscroll_check.toggled.connect(self._on_autoscroll_toggled)
+        conn_row.addWidget(self.autoscroll_check)
+
         outer.addLayout(conn_row)
 
-        # --- main split: (send/log) | (radio control + activity) ---
+        # --- main split: (send/log) | (radio control + CW + activity) ---
         main_split = QSplitter(Qt.Orientation.Horizontal if PYQT_VERSION == 6 else Qt.Horizontal)
 
         left = QWidget()
@@ -353,8 +416,19 @@ class MainWindow(QMainWindow):
         clear_row.addWidget(clear_btn)
         left_layout.addLayout(clear_row)
 
+        cmd_box = QGroupBox("Command Center  (real ground-station CLI keywords -- work on any build)")
+        cmd_grid = QGridLayout(cmd_box)
+        self.cli_buttons = []
+        for i, (label, keyword, tooltip) in enumerate(CLI_COMMANDS):
+            btn = QPushButton(label)
+            btn.setToolTip(f"{tooltip}\nSends: {keyword}")
+            btn.clicked.connect(lambda _checked, kw=keyword: self.send_cli_command(kw))
+            cmd_grid.addWidget(btn, i // 5, i % 5)
+            self.cli_buttons.append(btn)
+        left_layout.addWidget(cmd_box)
+
         mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel("Mode:"))
+        mode_row.addWidget(QLabel("Raw TX mode:"))
         self.text_radio = QRadioButton("Text")
         self.hex_radio = QRadioButton("Hex")
         self.text_radio.setChecked(True)
@@ -371,7 +445,7 @@ class MainWindow(QMainWindow):
         send_row = QHBoxLayout()
         self.input = HistoryLineEdit()
         self.input.setPlaceholderText(
-            "Type a message, or raw hex bytes in Hex mode... (Up/Down for history)")
+            "DEBUG_BUILD raw TX <hex> backdoor -- message or hex bytes... (Up/Down for history)")
         self.input.returnPressed.connect(self.send_message)
         self.input.textChanged.connect(self.update_byte_count)
         send_row.addWidget(self.input, 1)
@@ -392,7 +466,7 @@ class MainWindow(QMainWindow):
 
         main_split.addWidget(left)
 
-        # --- right: radio control + TX activity ---
+        # --- right: radio control + CW sidetone + TX activity ---
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -424,7 +498,7 @@ class MainWindow(QMainWindow):
         radio_layout.addWidget(_hline())
 
         beacon_row = QHBoxLayout()
-        beacon_row.addWidget(QLabel("Housekeeping beacon (5s tick):"))
+        beacon_row.addWidget(QLabel("All beaconing (text/CW/Beacon1/Beacon2):"))
         self.beacon_on_btn = QPushButton("ON")
         self.beacon_on_btn.setCheckable(True)
         self.beacon_on_btn.setChecked(True)
@@ -443,6 +517,46 @@ class MainWindow(QMainWindow):
 
         right_layout.addWidget(radio_box)
 
+        # --- CW sidetone panel ---
+        cw_box = QGroupBox("CW Sidetone  (simulated playback of a reported CW beacon)")
+        cw_layout = QVBoxLayout(cw_box)
+
+        self.cw_enable_check = QCheckBox("Play audible Morse when a CW beacon is sent")
+        cw_layout.addWidget(self.cw_enable_check)
+
+        cw_row1 = QHBoxLayout()
+        cw_row1.addWidget(QLabel("WPM:"))
+        self.cw_wpm_spin = QSpinBox()
+        self.cw_wpm_spin.setRange(5, 60)
+        self.cw_wpm_spin.setValue(morse.DEFAULT_WPM)
+        self.cw_wpm_spin.setToolTip("Must match the firmware's CW_DEFAULT_WPM (core/Inc/cw_beacon.h) for accurate timing.")
+        cw_row1.addWidget(self.cw_wpm_spin)
+        cw_row1.addWidget(QLabel("Pitch (Hz):"))
+        self.cw_pitch_spin = QSpinBox()
+        self.cw_pitch_spin.setRange(200, 1200)
+        self.cw_pitch_spin.setValue(morse.DEFAULT_SIDETONE_HZ)
+        cw_row1.addWidget(self.cw_pitch_spin)
+        cw_layout.addLayout(cw_row1)
+
+        cw_row2 = QHBoxLayout()
+        cw_row2.addWidget(QLabel("Volume:"))
+        self.cw_volume_slider = QSlider(Qt.Orientation.Horizontal if PYQT_VERSION == 6 else Qt.Horizontal)
+        self.cw_volume_slider.setMinimum(0)
+        self.cw_volume_slider.setMaximum(100)
+        self.cw_volume_slider.setValue(30)
+        cw_row2.addWidget(self.cw_volume_slider, 1)
+        self.cw_test_btn = QPushButton("Test tone")
+        self.cw_test_btn.setToolTip('Plays "DE NEPSAT TEST" immediately, without waiting for a real beacon.')
+        self.cw_test_btn.clicked.connect(self.play_cw_test_tone)
+        cw_row2.addWidget(self.cw_test_btn)
+        cw_layout.addLayout(cw_row2)
+
+        self.cw_last_label = QLabel("Last CW beacon heard: --")
+        self.cw_last_label.setStyleSheet(f"color: {FG_DIM};")
+        cw_layout.addWidget(self.cw_last_label)
+
+        right_layout.addWidget(cw_box)
+
         activity_box = QGroupBox("TX Activity  (parsed from the board's own RadioApp_Send log lines)")
         activity_layout = QVBoxLayout(activity_box)
         self.activity = TxActivityPanel()
@@ -450,7 +564,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(activity_box, 1)
 
         main_split.addWidget(right)
-        main_split.setSizes([700, 500])
+        main_split.setSizes([760, 600])
 
         outer.addWidget(main_split, 1)
 
@@ -485,6 +599,8 @@ class MainWindow(QMainWindow):
         self.power_slider.setEnabled(connected)
         self.beacon_on_btn.setEnabled(connected)
         self.beacon_off_btn.setEnabled(connected)
+        for btn in self.cli_buttons:
+            btn.setEnabled(connected)
 
     def toggle_connection(self):
         if self.ser is not None:
@@ -576,6 +692,14 @@ class MainWindow(QMainWindow):
             self.beacon_confirmed_label.setStyleSheet(
                 f"color: {ACCENT if on else WARN}; font-weight: bold;")
 
+        m = _RE_CW_BEACON.search(line)
+        if m:
+            message = m.group(1)
+            self.cw_last_label.setText(f"Last CW beacon heard: \"{message}\"")
+            self.cw_last_label.setStyleSheet(f"color: {ACCENT}; font-weight: bold;")
+            if self.cw_enable_check.isChecked():
+                self._play_cw_message(message)
+
     def _append_colored_incoming_line(self, line: str):
         upper = line.upper()
         if "ERR" in upper or "FAIL" in upper:
@@ -587,6 +711,8 @@ class MainWindow(QMainWindow):
         self.append_log(line, color)
 
     def append_log(self, line: str, color=None):
+        if self._show_timestamps:
+            line = time.strftime("[%H:%M:%S] ") + line
         cursor = self.log.textCursor()
         cursor.movePosition(_END_MOVE)
         fmt = QTextCharFormat()
@@ -594,7 +720,14 @@ class MainWindow(QMainWindow):
             fmt.setForeground(QColor(color))
         cursor.insertText(line + "\n", fmt)
         self.log.setTextCursor(cursor)
-        self.log.ensureCursorVisible()
+        if self._autoscroll:
+            self.log.ensureCursorVisible()
+
+    def _on_timestamp_toggled(self, checked: bool):
+        self._show_timestamps = checked
+
+    def _on_autoscroll_toggled(self, checked: bool):
+        self._autoscroll = checked
 
     # ---------------------------------------------------------------
     def _on_power_slider_changed(self, value: int):
@@ -626,6 +759,34 @@ class MainWindow(QMainWindow):
             self.on_serial_error(str(e))
             return
         self.append_log("--- sent BEACON %s ---" % ("ON" if enable else "OFF"), ACCENT)
+
+    def send_cli_command(self, keyword: str):
+        if self.ser is None:
+            return
+        line = (keyword + "\r\n").encode("ascii")
+        try:
+            self.ser.write(line)
+        except serial.SerialException as e:
+            self.on_serial_error(str(e))
+            return
+        self.append_log("--- sent %s ---" % keyword, ACCENT)
+
+    # ---------------------------------------------------------------
+    def _play_cw_message(self, message: str):
+        try:
+            if not self._audio.is_running:
+                self._audio.start()
+        except Exception as e:  # noqa: broad -- any audio-device failure (missing lib, no output device, PortAudio error) should just disable the feature, never crash the GUI
+            self.append_log(f"--- CW sidetone unavailable: {e} ---", WARN)
+            self.cw_enable_check.setChecked(False)
+            return
+        audio = morse.message_to_audio(
+            message, wpm=self.cw_wpm_spin.value(), sidetone_hz=self.cw_pitch_spin.value(),
+            sample_rate=CW_AUDIO_SAMPLE_RATE, volume=self.cw_volume_slider.value() / 100.0)
+        self._audio.push(audio)
+
+    def play_cw_test_tone(self):
+        self._play_cw_message("DE NEPSAT TEST")
 
     # ---------------------------------------------------------------
     def current_payload_bytes(self):
@@ -717,6 +878,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.disconnect_serial()
+        self._audio.stop()
         event.accept()
 
 

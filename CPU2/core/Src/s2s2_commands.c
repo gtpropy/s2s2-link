@@ -1,3 +1,10 @@
+/*
+ * s2s2_commands.c
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-30
+ */
+
 #include "s2s2_commands.h"
 #include <string.h>
 
@@ -15,6 +22,7 @@ const char *ack_status_str(uint8_t status) {
         case ACK_STATUS_INVALID_COMMAND:  return "invalid command";
         case ACK_STATUS_MEMORY_ERROR:     return "memory/file error";
         case ACK_STATUS_TX_FAILED:        return "transmission failed";
+        case ACK_STATUS_AUTH_FAILED:      return "authentication failed (bad MAC or replay)";
         default:                          return "unknown status";
     }
 }
@@ -37,6 +45,8 @@ void command_pack(const cubus_command_t *cmd, uint8_t out[COMMAND_PAYLOAD_LEN]) 
     out[2] = cmd->data_id;
     put_u32(&out[3], cmd->address);
     put_u16(&out[7], cmd->num_packets);
+    put_u32(&out[9], cmd->counter);
+    memcpy(&out[13], cmd->mac, 8);
 }
 
 int command_unpack(const uint8_t *buf, uint16_t len, cubus_command_t *out) {
@@ -46,6 +56,8 @@ int command_unpack(const uint8_t *buf, uint16_t len, cubus_command_t *out) {
     out->data_id = buf[2];
     out->address = get_u32(&buf[3]);
     out->num_packets = get_u16(&buf[7]);
+    out->counter = get_u32(&buf[9]);
+    memcpy(out->mac, &buf[13], 8);
     return 0;
 }
 

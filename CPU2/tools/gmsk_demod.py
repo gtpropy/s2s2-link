@@ -1,3 +1,5 @@
+# @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+# @date   2026-08-30
 """
 gmsk_demod.py -- GMSK demodulator + frame sync for the S2S2 downlink,
 matching the STM32WL55 CPU2 firmware's exact PHY config (see
@@ -79,6 +81,18 @@ class RtlSdrSource:
         # samples so that always holds, regardless of what the caller asked for.
         aligned = ((num_samples + 255) // 256) * 256
         return self.dev.read_samples(aligned).astype(np.complex64)
+
+    def set_gain(self, gain):
+        """Live gain change (dB, or 'auto') -- takes effect on the next
+        read(), no need to reopen the device."""
+        self.dev.gain = gain
+
+    def set_freq_correction_ppm(self, ppm: int):
+        """Live crystal frequency-correction change, parts per million."""
+        self.dev.freq_correction = int(ppm)
+
+    def set_center_freq(self, freq_hz: float):
+        self.dev.center_freq = freq_hz
 
     def close(self):
         self.dev.close()
@@ -230,16 +244,31 @@ def signal_power_dbfs(iq: np.ndarray) -> float:
     return 10.0 * np.log10(power)
 
 
-def spectrum_db(iq: np.ndarray, nfft: int = 4096) -> np.ndarray:
+_WINDOW_FUNCS = {
+    "hann": np.hanning,
+    "hamming": np.hamming,
+    "blackman": np.blackman,
+    "rect": lambda n: np.ones(n),
+}
+
+
+def spectrum_db(iq: np.ndarray, nfft: int = 4096, window: str = "hann") -> np.ndarray:
     """Windowed FFT magnitude of the most recent `nfft` samples, in dB,
     DC-centered (index 0 = -sample_rate/2, index -1 = +sample_rate/2 minus
     one bin). Cheap enough to call once per GUI chunk for a live spectrum
     analyzer / waterfall -- a single representative snapshot per chunk is
     plenty for a real-time display, no need to FFT every sample.
-    Zero-padded (not tiled) if `iq` is shorter than `nfft`."""
+    Zero-padded (not tiled) if `iq` is shorter than `nfft`.
+
+    window: "hann" (default, good general-purpose sidelobe suppression),
+    "hamming" (narrower main lobe, higher sidelobes -- better for
+    resolving two close signals), "blackman" (opposite tradeoff, best
+    sidelobe suppression, widest main lobe), or "rect" (no window at all
+    -- maximum frequency resolution, worst spectral leakage)."""
     n = min(len(iq), nfft)
     seg = iq[-n:] if n > 0 else iq
-    windowed = seg * np.hanning(n) if n > 0 else seg
+    win_fn = _WINDOW_FUNCS.get(window, np.hanning)
+    windowed = seg * win_fn(n) if n > 0 else seg
     spec = np.fft.fftshift(np.fft.fft(windowed, n=nfft))
     return 20.0 * np.log10(np.abs(spec) + 1e-12)
 

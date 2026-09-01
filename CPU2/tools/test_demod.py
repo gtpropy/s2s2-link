@@ -1,3 +1,5 @@
+# @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+# @date   2026-08-30
 """
 test_demod.py -- end-to-end self-test for gmsk_demod.py + s2s2_decoder.py,
 using real firmware-encoded FX.25 frame bytes (generated via a small C

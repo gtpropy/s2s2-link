@@ -159,10 +159,14 @@ uart_debug.c \
 core/Src/rs.c \
 core/Src/cubus_proto.c \
 core/Src/ax25.c \
+core/Src/ax25_digi.c \
 core/Src/fx25.c \
 core/Src/cubus_ax25.c \
 core/Src/s2s2_commands.c \
+core/Src/s2s2_auth.c \
+core/Src/secrets.c \
 core/Src/tx_history.c \
+core/Src/cw_beacon.c \
 core/Src/radio_app.c \
 core/Src/stm32wlxx_it.c \
 core/stm32_seq.c \

@@ -1,3 +1,10 @@
+/*
+ * ipcc_m0plus_main.c
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-21
+ */
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -14,8 +21,11 @@
 #include "radio_app.h"
 #include "s2s2com.h"
 #include "s2s2_commands.h"
+#include "s2s2_auth.h"
 #include "cubus_ax25.h"
+#include "ax25_digi.h"
 #include "tx_history.h"
+#include "cw_beacon.h"
 
 const RadioConfig_t SatelliteProfile = {
     .txFrequency = DEFAULT_TX_FREQUENCY_HZ,
@@ -32,6 +42,20 @@ static const cubus_ax25_link_t s_link = {
 #define BURST_PACKET_COUNT  100
 #define BEACON_INTERVAL_MS  5000
 #define TX_TIMEOUT_MS       1000
+
+/* Real CW Morse beacon and structured FX.25 housekeeping beacons --
+   real amateur-CubeSat practice (see CPU2/README_GMSK_S2S2_ARCHITECTURE.md),
+   all gated by the same s_beacon_enabled bench-test toggle as the 5s text
+   ping above (DEBUG_BUILD only; always on in production, same as it).
+
+   Sequenced as one strict cycle, not three independent interval timers:
+   [CW] -> [Beacon1] -> [Mission 90s] -> [Beacon2] -> back to [CW]. CW/
+   Beacon1/Beacon2 slot lengths are just however long their actual radio
+   TX takes (Morse duration, FX.25 airtime, RX resume) -- only Mission
+   gets a fixed, dedicated timer, started fresh the moment its phase
+   begins, uninterrupted by any beacon. So the CW-to-CW gap is ~90s plus
+   whatever the three TX phases actually took, not a fixed number. */
+#define CYCLE_MISSION_MS   90000
 
 #define CMD_LINE_MAX 1400 /* "TX " + up to MAX_PAYLOAD_LEN (659) bytes hex-encoded (1318 chars) + margin */
 
@@ -53,10 +77,26 @@ static cubus_ax25_reassembler_t s_reassembler;
 static uint16_t s_tx_seq = 0;
 static uint32_t last_beacon_tick_ms = 0;
 static uint32_t last_burst_finish_time = 0;
+
+/* CW/Beacon1/Mission/Beacon2 cycle sequencer state -- see CYCLE_MISSION_MS
+   comment above. */
+typedef enum {
+    CYCLE_PHASE_CW = 0,
+    CYCLE_PHASE_BEACON1,
+    CYCLE_PHASE_MISSION,
+    CYCLE_PHASE_BEACON2,
+} CyclePhase_t;
+
+static CyclePhase_t s_cycle_phase = CYCLE_PHASE_CW;
+static uint32_t s_mission_start_ms = 0;
 static tx_history_t s_tx_history;
 #ifdef DEBUG_BUILD
 static bool s_beacon_enabled = true;
 #endif
+
+/* Digipeater mission (CMD_DIGIPEATER/CMD_ABORT_MISSION), production
+   feature (not DEBUG_BUILD-gated) -- see DPM_ARCHITECTURE.md. */
+static bool s_digipeater_enabled = false;
 
 /* Interrupt Status Callbacks */
 void OnTxDone(void) { tx_busy = 0; }
@@ -215,6 +255,108 @@ static int Retransmit_All_History(void) {
     return count;
 }
 
+/* ---- Digipeater mission (DPM_ARCHITECTURE.md) ----
+ *
+ * Real amateur digipeating: relays a third-party ham's uplinked AX.25 UI
+ * frame if (a) it lists our own callsign in its digipeater path with the
+ * H-bit still clear, and (b) we haven't already relayed this exact frame
+ * recently. Completely independent of the S2S2 command/telemetry link --
+ * see Try_Digipeat's call site in STATE_PROCESS_COMMAND for why this only
+ * ever runs on frames S2S2's own parsing has already given up on. */
+
+#define DIGI_DUP_TABLE_LEN 16   /* mirrors TX_HISTORY_LEN's sizing logic */
+#define DIGI_DUP_TTL_MS    8000
+
+typedef struct {
+    bool     used;
+    uint32_t hash;
+    uint32_t seen_at_ms;
+} digi_dup_entry_t;
+
+static digi_dup_entry_t s_digi_dup[DIGI_DUP_TABLE_LEN];
+static int s_digi_dup_next = 0;
+
+/* Cheap content fingerprint: the frame's own (already FCS-validated)
+   trailing CRC combined with its length. Not a security mechanism --
+   just enough to catch "the same transmission again" within a short
+   window, same as any APRS digipeater's dup cache. */
+static uint32_t Digi_Frame_Hash(const uint8_t *ax25_bytes, uint16_t len) {
+    uint16_t fcs = (uint16_t)(ax25_bytes[len - 2] | (ax25_bytes[len - 1] << 8));
+    return ((uint32_t)fcs << 16) ^ (uint32_t)len;
+}
+
+/* Returns true if this exact frame was already relayed within
+   DIGI_DUP_TTL_MS; records it (evicting the oldest ring slot) either
+   way, so the caller only ever needs to call this once per frame. */
+static bool Digi_Is_Duplicate(uint32_t hash) {
+    uint32_t now = Get_Time_Ms();
+    for (int i = 0; i < DIGI_DUP_TABLE_LEN; i++) {
+        if (s_digi_dup[i].used && s_digi_dup[i].hash == hash &&
+            (now - s_digi_dup[i].seen_at_ms) < DIGI_DUP_TTL_MS) {
+            return true;
+        }
+    }
+    s_digi_dup[s_digi_dup_next].used = true;
+    s_digi_dup[s_digi_dup_next].hash = hash;
+    s_digi_dup[s_digi_dup_next].seen_at_ms = now;
+    s_digi_dup_next = (s_digi_dup_next + 1) % DIGI_DUP_TABLE_LEN;
+    return false;
+}
+
+/* Attempts to digipeat one already FX.25/RS-received frame that S2S2's
+   own parsing rejected. Any failure at any stage (not real FX.25, not a
+   digi-shaped AX.25 frame, no unused hop addressed to us, duplicate,
+   re-encode/TX failure) just returns -- this path never reports an error
+   to anyone, since a frame reaching here was never ours to complain
+   about in the first place. */
+static void Try_Digipeat(const uint8_t frame_copy[FX25_FRAME_LEN], uint16_t frame_len) {
+    (void)frame_len; /* fx25_decode_frame reads a fixed FX25_FRAME_LEN, same as cubus_ax25_accept_frame does */
+
+    uint8_t fx25_scratch[FX25_FRAME_LEN];
+    memcpy(fx25_scratch, frame_copy, sizeof(fx25_scratch));
+
+    uint8_t ax25_bytes[AX25_DIGI_MAX_FRAME_LEN];
+    int rs_corrected = 0;
+    int ax25_len = fx25_decode_frame(fx25_scratch, ax25_bytes, sizeof(ax25_bytes), &rs_corrected);
+    if (ax25_len < 0) return; /* not even a valid FX.25 frame -- genuine noise, not ours to relay */
+
+    ax25_full_frame_t f;
+    if (ax25_digi_parse(ax25_bytes, (uint16_t)ax25_len, &f) != 0) return; /* not digi-shaped either */
+
+    if (Digi_Is_Duplicate(Digi_Frame_Hash(ax25_bytes, (uint16_t)ax25_len))) {
+        uart2_puts("DIGI: duplicate, not re-relaying\r\n");
+        return;
+    }
+
+    int hop_index = -1;
+    for (uint8_t i = 0; i < f.num_digis; i++) {
+        if (!f.digis[i].has_been_repeated &&
+            strcmp(f.digis[i].addr.callsign, AX25_SATELLITE_CALLSIGN) == 0 &&
+            f.digis[i].addr.ssid == AX25_SATELLITE_SSID) {
+            hop_index = i;
+            break;
+        }
+    }
+    if (hop_index < 0) return; /* not addressed to us as a digipeater hop */
+
+    f.digis[hop_index].has_been_repeated = true;
+
+    uint8_t rebuilt[AX25_DIGI_MAX_FRAME_LEN];
+    uint16_t rebuilt_len = 0;
+    if (ax25_digi_rebuild(&f, rebuilt, sizeof(rebuilt), &rebuilt_len) != 0) return;
+
+    uint8_t out_frame[FX25_FRAME_LEN];
+    if (fx25_encode_frame(rebuilt, rebuilt_len, out_frame) != 0) return;
+
+    if (Send_FX25_Frame(out_frame)) {
+        uart2_printf("DIGI: relayed via hop %d (%s-%u), %u info byte(s), rs_corrected=%d\r\n",
+                      hop_index, f.digis[hop_index].addr.callsign, f.digis[hop_index].addr.ssid,
+                      f.info_len, rs_corrected);
+    } else {
+        uart2_puts("DIGI: relay TX failed\r\n");
+    }
+}
+
 /* Replies to a telecommand with a TYPE_ACK frame carrying the standard
    status code (see s2s2_commands.h) and the seq_num of the command it's
    acknowledging. */
@@ -292,6 +434,150 @@ static void Send_Beacon_If_Due(void) {
     rx_timeout_flag = 0;
     rx_error_flag = 0;
     RadioApp_StartRx();
+}
+
+/* Coarse single-digit (0-9) telemetry code for the CW beacon message --
+   V, Gx, Gy, Gz, T, matching real amateur-CubeSat CW beacon practice
+   (JY1SAT/AO-40 heritage). NO ADCS/EPDM sensor drivers are wired up on
+   this Nucleo bench build -- same honest gap as CMD_GET_ADCS/
+   CMD_GET_HOUSEKEEPING's "not available on this build" replies above.
+   These five digits are fixed placeholders until real battery/gyro/
+   thermal hardware exists; swapping in real ADC/IMU reads here is the
+   entire integration point, nothing else about the beacon changes. */
+static void Get_Cw_Telemetry_Digits(char out[6]) {
+    out[0] = '0'; /* V  */
+    out[1] = '0'; /* Gx */
+    out[2] = '0'; /* Gy */
+    out[3] = '0'; /* Gz */
+    out[4] = '0'; /* T  */
+    out[5] = '\0';
+}
+
+/* Real, listenable-by-ear Morse CW beacon: "DE <CALLSIGN> <5 digits>".
+   Independent of the S2S2 AX.25/FX.25 link entirely -- keys the raw RF
+   carrier directly (RadioApp_KeyCw/cw_beacon.h), not a packet of any
+   kind, so it needs no seq_num/ACK/tx_history bookkeeping. */
+static void Send_Cw_Beacon(void) {
+    char digits[6];
+    Get_Cw_Telemetry_Digits(digits);
+
+    char message[32];
+    snprintf(message, sizeof(message), "DE %s %s", AX25_SATELLITE_CALLSIGN, digits);
+
+    uart2_printf("\r\nCW BEACON TX: \"%s\"\r\n", message);
+    cw_beacon_send(message, CW_DEFAULT_WPM);
+
+    /* cw_beacon_send leaves the radio in Standby, not Rx -- same
+       requirement as RadioApp_Send, resume normal GMSK listening. */
+    rx_done_flag = 0;
+    rx_timeout_flag = 0;
+    rx_error_flag = 0;
+    RadioApp_StartRx();
+}
+
+/* Primary housekeeping beacon (structured, FX.25-framed, decodable by
+   any AX.25/FX.25-aware ground station). tim_day/tim_hour are real
+   (mission elapsed time since boot, from Get_Time_Ms()) -- everything
+   else in beacon1_t is a placeholder pending real battery/thermal/EPDM
+   hardware (same gap as CMD_GET_HEALTH/HOUSEKEEPING above), zeroed
+   rather than fabricated. */
+static void Send_Beacon1(void) {
+    beacon1_t b;
+    memset(&b, 0, sizeof(b));
+    uint32_t uptime_s = Get_Time_Ms() / 1000;
+    b.tim_day = (uint16_t)(uptime_s / 86400);
+    b.tim_hour = (uint8_t)((uptime_s / 3600) % 24);
+
+    uint8_t payload[1 + BEACON1_PAYLOAD_LEN];
+    payload[0] = DATA_ID_BEACON1;
+    beacon1_pack(&b, &payload[1]);
+
+    uint16_t seq = s_tx_seq++;
+    uart2_printf("\r\nBEACON1 TX (cycle): day=%u hour=%u\r\n", b.tim_day, b.tim_hour);
+    Send_Message(TYPE_TELEMETRY, NODE_ID_GROUND, seq, FLAG_LAST_IN_BURST, payload, sizeof(payload));
+
+    rx_done_flag = 0;
+    rx_timeout_flag = 0;
+    rx_error_flag = 0;
+    RadioApp_StartRx();
+}
+
+/* Redundant beacon (solar panel + ADCS data) -- same structure/honesty
+   note as Send_Beacon1; beacon2_t has no time field of its own to
+   fill with a real value, so it's entirely placeholder until real
+   solar-panel/gyro/magnetometer hardware exists. */
+static void Send_Beacon2(void) {
+    beacon2_t b;
+    memset(&b, 0, sizeof(b));
+
+    uint8_t payload[1 + BEACON2_PAYLOAD_LEN];
+    payload[0] = DATA_ID_BEACON2;
+    beacon2_pack(&b, &payload[1]);
+
+    uint16_t seq = s_tx_seq++;
+    uart2_puts("\r\nBEACON2 TX (cycle)\r\n");
+    Send_Message(TYPE_TELEMETRY, NODE_ID_GROUND, seq, FLAG_LAST_IN_BURST, payload, sizeof(payload));
+
+    rx_done_flag = 0;
+    rx_timeout_flag = 0;
+    rx_error_flag = 0;
+    RadioApp_StartRx();
+}
+
+/* Drives the [CW]...[Beacon1][Mission 90s][Beacon2]...[CW] cycle, one
+   phase-step per call. CW/Beacon1/Beacon2 each fire once then advance
+   immediately (real TX duration is whatever it is); Mission blocks phase
+   advance until its own dedicated CYCLE_MISSION_MS timer -- started the
+   instant Mission begins, not from CW -- has run out uninterrupted.
+   Ordinary command RX/processing (STATE_PROCESS_COMMAND) is untouched by
+   this and keeps working normally through every phase, Mission included. */
+static void Cycle_Tick(void) {
+    if (app_state != STATE_IDLE_RX) {
+        return;
+    }
+
+    switch (s_cycle_phase) {
+        case CYCLE_PHASE_CW:
+#ifdef DEBUG_BUILD
+            if (s_beacon_enabled) {
+#endif
+                Send_Cw_Beacon();
+#ifdef DEBUG_BUILD
+            }
+#endif
+            s_cycle_phase = CYCLE_PHASE_BEACON1;
+            break;
+
+        case CYCLE_PHASE_BEACON1:
+#ifdef DEBUG_BUILD
+            if (s_beacon_enabled) {
+#endif
+                Send_Beacon1();
+#ifdef DEBUG_BUILD
+            }
+#endif
+            s_mission_start_ms = Get_Time_Ms();
+            s_cycle_phase = CYCLE_PHASE_MISSION;
+            break;
+
+        case CYCLE_PHASE_MISSION:
+            if ((Get_Time_Ms() - s_mission_start_ms) < CYCLE_MISSION_MS) {
+                return;
+            }
+            s_cycle_phase = CYCLE_PHASE_BEACON2;
+            break;
+
+        case CYCLE_PHASE_BEACON2:
+#ifdef DEBUG_BUILD
+            if (s_beacon_enabled) {
+#endif
+                Send_Beacon2();
+#ifdef DEBUG_BUILD
+            }
+#endif
+            s_cycle_phase = CYCLE_PHASE_CW;
+            break;
+    }
 }
 
 #ifdef DEBUG_BUILD
@@ -440,11 +726,13 @@ int main(void) {
 #ifdef DEBUG_BUILD
     uart2_puts("Type TX <hex> to transmit arbitrary bytes downlink, e.g. TX 48656C6C6F\r\n");
     uart2_puts("Type POWER <dbm> to override TX power for bench testing\r\n");
-    uart2_puts("Type BEACON ON / BEACON OFF to toggle the 5s housekeeping beacon\r\n");
+    uart2_puts("Type BEACON ON / BEACON OFF to toggle all beaconing "
+               "(5s text, plus the CW/Beacon1/Mission/Beacon2 cycle)\r\n");
 #endif
 
     app_state = STATE_IDLE_RX;
     last_beacon_tick_ms = Get_Time_Ms();
+    s_cycle_phase = CYCLE_PHASE_CW;
 
     while (1) {
         switch (app_state) {
@@ -471,6 +759,15 @@ int main(void) {
                     uart2_printf("frame rejected (bad FX.25 tag/RS, bad AX.25 FCS, or malformed) "
                                  "rssi=%d dBm snr=%d dB - still listening\r\n",
                                  (int)rx_last_rssi, (int)rx_last_snr);
+                    /* Not a valid S2S2 fragment for us -- if the digipeater
+                       mission is active, give the same raw bytes a chance at
+                       the digipeat path before giving up on the frame (see
+                       DPM_ARCHITECTURE.md Section 1: the two paths fork
+                       below cubus_ax25.c, not above it). S2S2 traffic always
+                       gets first look, unconditionally, right above. */
+                    if (s_digipeater_enabled) {
+                        Try_Digipeat(frame_copy, rx_chunk_size);
+                    }
                     app_state = STATE_IDLE_RX;
                     break;
                 }
@@ -525,6 +822,27 @@ int main(void) {
                 bool want_ack = (s_reassembler.flags & FLAG_ACK_REQUESTED) != 0;
                 uint16_t cmd_seq = s_reassembler.seq_num;
 
+                /* Authenticate before dispatching anything (see s2s2_auth.h):
+                   wrong MAC -> forged/tampered command, reject outright.
+                   Right MAC but stale/replayed counter -> reject too, and
+                   in both cases do NOT advance the replay floor. */
+                uint8_t expected_mac[S2S2_AUTH_MAC_LEN];
+                s2s2_auth_compute_mac(s_reassembler.src_id, s_reassembler.dst_id,
+                                       s_reassembler.payload, COMMAND_SIGNED_LEN, expected_mac);
+                if (memcmp(expected_mac, cmd.mac, S2S2_AUTH_MAC_LEN) != 0) {
+                    uart2_puts(" *** COMMAND RECEIVED: NO (bad MAC - forged or corrupted) ***\r\n");
+                    if (want_ack) Send_Ack(ACK_STATUS_AUTH_FAILED, DATA_ID_GENERAL, cmd_seq);
+                    app_state = STATE_IDLE_RX;
+                    break;
+                }
+                if (!s2s2_auth_check_and_update_counter(cmd.counter)) {
+                    uart2_printf(" *** COMMAND RECEIVED: NO (counter=%lu not newer than last "
+                                 "accepted - replay) ***\r\n", (unsigned long)cmd.counter);
+                    if (want_ack) Send_Ack(ACK_STATUS_AUTH_FAILED, DATA_ID_GENERAL, cmd_seq);
+                    app_state = STATE_IDLE_RX;
+                    break;
+                }
+
                 switch (cmd.opcode) {
                     case CMD_REQUEST_BURST:
                         if ((Get_Time_Ms() - last_burst_finish_time) < 4000) {
@@ -545,6 +863,7 @@ int main(void) {
                         break;
 
                     case CMD_ABORT_MISSION:
+                        s_digipeater_enabled = false;
                         uart2_puts("CMD_ABORT_MISSION\r\n");
                         if (want_ack) Send_Ack(ACK_STATUS_COMPLETED, DATA_ID_GENERAL, cmd_seq);
                         app_state = STATE_IDLE_RX;
@@ -566,10 +885,22 @@ int main(void) {
 
                     case CMD_RUN_CAMERA:
                     case CMD_DOWNLOAD_FILE:
-                    case CMD_DIGIPEATER:
-                        /* Camera/file/digipeater missions not implemented in this build. */
+                        /* Camera/file missions not implemented in this build. */
                         uart2_printf("opcode 0x%02X: mission not implemented on this build\r\n", cmd.opcode);
                         if (want_ack) Send_Ack(ACK_STATUS_MISSION_INACTIVE, cmd.data_id, cmd_seq);
+                        app_state = STATE_IDLE_RX;
+                        break;
+
+                    case CMD_DIGIPEATER:
+                        /* Real amateur digipeating (DPM_ARCHITECTURE.md) --
+                           lowest-priority, opportunistic-only: the fork in
+                           STATE_PROCESS_COMMAND only tries Try_Digipeat()
+                           after S2S2's own command/telemetry/gap-report
+                           parsing has already failed, so this never delays
+                           or competes with scheduled S2S2 traffic. */
+                        s_digipeater_enabled = true;
+                        uart2_puts("CMD_DIGIPEATER: digipeater mission ACTIVE\r\n");
+                        if (want_ack) Send_Ack(ACK_STATUS_ACCEPTED, cmd.data_id, cmd_seq);
                         app_state = STATE_IDLE_RX;
                         break;
 
@@ -617,7 +948,8 @@ int main(void) {
                 break;
         }
         Send_Beacon_If_Due();
+        Cycle_Tick();
         Process_UART_Command();
     }
     return 0;
-}
+  }

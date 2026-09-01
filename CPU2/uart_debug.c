@@ -8,7 +8,11 @@
  * PA2 = LPUART1_TX
  * PA3 = LPUART1_RX
  *
- ****************************************************************************/
+ ***************************************************************************
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-21
+*/
 
 #include <stdint.h>
 #include <stdio.h>

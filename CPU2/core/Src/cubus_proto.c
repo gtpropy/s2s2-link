@@ -6,7 +6,10 @@
  * see cubus_ax25.h's header comment for why. What's left is generic:
  * one-time stack init and gap tracking, both independent of which
  * transport carried the packet.
- */
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-30
+*/
 #include <string.h>
 #include "s2s2com.h"
 

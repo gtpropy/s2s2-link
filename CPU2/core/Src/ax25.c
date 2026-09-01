@@ -1,3 +1,10 @@
+/*
+ * ax25.c
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-21
+ */
+
 #include "ax25.h"
 #include <string.h>
 #include <ctype.h>

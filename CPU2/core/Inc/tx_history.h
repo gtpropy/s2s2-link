@@ -14,7 +14,10 @@
  * TX_HISTORY_MAX_PAYLOAD is simply not buffered for retransmit (the
  * existing ACK_STATUS_DATA_UNAVAILABLE reply already covers "not
  * available", so this degrades gracefully rather than corrupting anything).
- */
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-30
+*/
 #ifndef TX_HISTORY_H
 #define TX_HISTORY_H
 

@@ -9,7 +9,10 @@
  *
  * TX (uplink):   437.375 MHz
  * RX (downlink): 435.000 MHz
- */
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-21
+*/
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -30,6 +33,7 @@
 #include "radio_app.h"
 #include "s2s2com.h"
 #include "s2s2_commands.h"
+#include "s2s2_auth.h"
 #include "cubus_ax25.h"
 
 /*
@@ -385,9 +389,14 @@ static void Send_Command_Ex(uint8_t opcode, uint8_t subsystem, uint8_t data_id,
                              uint32_t address, uint16_t num_packets)
 {
     cubus_command_t cmd = { .opcode = opcode, .subsystem = subsystem, .data_id = data_id,
-                             .address = address, .num_packets = num_packets };
+                             .address = address, .num_packets = num_packets,
+                             .counter = s2s2_auth_next_counter() };
     uint8_t payload[COMMAND_PAYLOAD_LEN];
     command_pack(&cmd, payload);
+    /* Sign after packing so the MAC covers the exact wire bytes
+       (opcode..counter, COMMAND_SIGNED_LEN of them), not the struct. */
+    s2s2_auth_compute_mac(NODE_ID_GROUND, NODE_ID_SATELLITE,
+                           payload, COMMAND_SIGNED_LEN, &payload[13]);
 
     uint16_t seq = s_uplink_seq++;
     uart2_printf("\r\nTX COMMAND 0x%02X (seq=%u)\r\n", opcode, seq);

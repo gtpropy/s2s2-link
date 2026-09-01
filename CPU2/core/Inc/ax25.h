@@ -7,7 +7,10 @@
  * This is what makes S2S2 receivable by any AX.25/FX.25-aware ground
  * station (SatNOGS, gr-satellites, Direwolf) without custom software --
  * see fx25.h for the tradeoff this buys and what it costs.
- */
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-21
+*/
 #ifndef AX25_H
 #define AX25_H
 

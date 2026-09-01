@@ -1,3 +1,10 @@
+/*
+ * fx25.c
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-30
+ */
+
 #include "fx25.h"
 #include <string.h>
 

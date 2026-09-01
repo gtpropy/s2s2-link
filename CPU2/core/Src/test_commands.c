@@ -1,3 +1,10 @@
+/*
+ * test_commands.c
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-30
+ */
+
 #include "s2s2_commands.h"
 #include <stdio.h>
 #include <string.h>

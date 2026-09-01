@@ -25,7 +25,10 @@
  *
  *   [version][type][src_id][dst_id][seq_num(2)][session_id(2)][flags]
  *   [frag_index][frag_total][frag_len][ ...frag_len payload bytes... ]
- */
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-30
+*/
 #ifndef CUBUS_AX25_H
 #define CUBUS_AX25_H
 

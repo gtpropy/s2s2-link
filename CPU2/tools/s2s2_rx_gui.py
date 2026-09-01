@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+# @date   2026-08-30
 """
 s2s2_rx_gui.py -- PyQt receiver GUI for the S2S2 GMSK/AX.25/FX.25 downlink,
 using an RTL-SDR dongle (or a recorded IQ file) as the front end.
@@ -7,62 +9,69 @@ Pipeline: RTL-SDR/file IQ -> gmsk_demod.py (FM discriminator, resample to
 fixed samples/symbol, brute-force polarity/bit-order/timing-phase search,
 sync-word correlation) -> s2s2_decoder.py (FX.25 RS(255,223)-shortened
 correction, AX.25 FCS check, S2S2 fragment reassembly, command/telemetry
-pretty-print). See both modules' docstrings for the exact PHY parameters
-this matches (core/Src/radio_app.c) and an honest note on what could not
-be verified without real hardware (there is none in this environment --
-see test_demod.py for the synthetic self-test that stands in for it).
+pretty-print). A parallel path, cw_monitor.py, envelope-detects the
+satellite's real Morse CW beacon (an unmodulated, on/off-keyed carrier at
+the same frequency, see core/Src/cw_beacon.c) and turns it into an
+audible sidetone plus an optional text decode (morse.py). See each
+module's docstring for exact parameters and an honest note on what could
+not be verified without real hardware (there is none in this environment
+-- see test_demod.py / the scratchpad tests referenced in cw_monitor.py's
+docstring for the synthetic self-tests that stand in for it).
 
-Works with either PyQt5 or PyQt6, numpy, scipy, pyqtgraph, and (optional,
-only needed for the RTL-SDR source, not for File mode) pyrtlsdr.
+Works with either PyQt5 or PyQt6, numpy, scipy, pyqtgraph, and (optional)
+pyrtlsdr for a real RTL-SDR, sounddevice for the CW audio monitor.
 
 Install:
     pip install numpy scipy pyqtgraph PyQt6      # or PyQt5
-    pip install pyrtlsdr                         # optional, for a real RTL-SDR
+    pip install pyrtlsdr sounddevice             # optional
 
 Run:
     python3 s2s2_rx_gui.py
 
-Usage:
+Usage -- Source:
     1. Pick a source: "RTL-SDR" (live dongle) or "IQ file" (a capture
        recorded with rtl_sdr, or one made with make_demo_capture.py for
-       a hardware-free test drive).
-    2. Set frequency (default matches config.h's DEFAULT_TX_FREQUENCY_HZ,
-       435.000 MHz -- the satellite's downlink/beacon frequency, i.e. what
-       a ground receiver needs; DEFAULT_RX_FREQUENCY_HZ, 437.375 MHz, is
-       the *satellite's* listening frequency for uplink commands, not
-       useful here unless you're monitoring the ground station's own
-       uplink instead) and sample rate (240000 recommended -- an exact 25
-       samples/symbol at 9600 baud; other rates work too via resampling).
-    3. Click Start. Decoded packets appear in the table AND get their full
-       field breakdown auto-appended live to the right-hand detail pane
-       (Beacon1/2, ACK, command, or raw hex/ASCII for TYPE_RAW/unknown --
-       click a row to jump back to that entry). The "Signal / Decode
-       Quality" panel tracks search mode (full-scan vs locked), the
-       locked (phase, polarity, bit-order) combination once one decode
-       succeeds, running decoded/rejected counts, success rate, and a
-       relative signal-power reading (dBFS) for tuning antenna placement.
-    4. The "RF Analyzer" tabs on the right show a live spectrum plot and
-       scrolling waterfall of the tuned IQ (handy for confirming the
-       satellite's carrier is actually where you think it is and how
-       strong it is above the noise floor), plus rolling link-quality
-       graphs: signal power, decoded/rejected rate per chunk, and success
-       rate over time -- the same "success rate" number in the stats bar,
-       but watchable as it recovers after a lock-loss event instead of
-       staying a single misleading cumulative percentage.
-    5. The frame log stays quiet by default once locked -- only real
-       decodes, partial fragments, and lock-acquired/lock-lost events are
-       shown, since most of the other ~99 combinations tried per chunk
-       during a full-scan were never going to be right anyway. Check
-       "Verbose log" to see every individual rejection if you need to
-       debug the demod pipeline itself.
+       a hardware-free test drive). Set frequency (default matches
+       config.h's DEFAULT_TX_FREQUENCY_HZ, 435.000 MHz -- the satellite's
+       downlink/beacon frequency), sample rate, gain, and PPM frequency
+       correction (RTL-SDR crystal error -- live-adjustable while
+       running). FFT size, window function, and chunk length are set
+       before Start (they affect buffer sizing).
+    2. Click Start. Decoded packets appear in the table AND get their full
+       field breakdown auto-appended live to the right-hand detail pane.
+       The "Signal / Decode Quality" bar tracks search mode, the locked
+       (phase, polarity, bit-order) combination, running decoded/rejected
+       counts, success rate, and signal power.
+
+Usage -- RF Analyzer tab:
+    3. Spectrum/Waterfall: live spectrum with a movable reference level,
+       adjustable colormap, peak-hold (with reset), and a mouse-hover
+       marker readout (frequency + magnitude at the cursor). Squelch
+       threshold gates the demod search (and the CW monitor) below a set
+       power, both to save CPU on a dead channel and to keep the log
+       quiet. LOCK_MISS_LIMIT (how many empty windows before falling back
+       to a full brute-force re-scan) is live-adjustable here too.
+    4. Link Quality: signal power, decoded/rejected rate, and cumulative
+       success rate over time -- watchable as it recovers after a
+       lock-loss event instead of staying one misleading cumulative
+       number.
+
+Usage -- CW Monitor tab:
+    5. Enable to hear the satellite's real Morse CW beacon as an audible
+       sidetone, generated by genuine envelope detection over the live
+       IQ (cw_monitor.py) -- not a simulation. Offset defaults to 0 Hz
+       (the CW beacon shares the GMSK downlink's frequency). Adjust
+       bandwidth, threshold, sidetone pitch, and volume live. Enable
+       "Auto-decode" to see the recovered text as it's received.
 
 Note on LOCK_MISS_LIMIT: earlier versions of this GUI dropped its lock
 after 2 seconds of silence (4 misses x 0.5s chunks), which is *shorter*
 than the satellite's 5-second beacon interval -- so between every beacon
 it fell back to a full 100-combination brute-force scan, and the resulting
 flood of noise-driven false sync hits (each counted as "rejected") tanked
-the cumulative success-rate reading even on a perfectly healthy link. Bumped
-to comfortably outlast a missed beacon or two; see the constant below.
+the cumulative success-rate reading even on a perfectly healthy link.
+Default bumped to comfortably outlast a missed beacon or two; now also
+live-adjustable in the GUI instead of a fixed constant.
 """
 import os
 import sys
@@ -80,7 +89,7 @@ try:
         QComboBox, QPushButton, QLineEdit, QPlainTextEdit, QLabel,
         QMessageBox, QStatusBar, QTableWidget, QTableWidgetItem, QSplitter,
         QFileDialog, QHeaderView, QGroupBox, QFormLayout, QCheckBox,
-        QTabWidget,
+        QTabWidget, QSlider, QSpinBox, QDoubleSpinBox,
     )
     PYQT_VERSION = 6
 except ImportError:
@@ -91,7 +100,7 @@ except ImportError:
         QComboBox, QPushButton, QLineEdit, QPlainTextEdit, QLabel,
         QMessageBox, QStatusBar, QTableWidget, QTableWidgetItem, QSplitter,
         QFileDialog, QHeaderView, QGroupBox, QFormLayout, QCheckBox,
-        QTabWidget,
+        QTabWidget, QSlider, QSpinBox, QDoubleSpinBox,
     )
     PYQT_VERSION = 5
 
@@ -100,6 +109,9 @@ import pyqtgraph as pg
 
 import gmsk_demod as gd
 import s2s2_decoder as dec
+import morse
+from cw_monitor import CwMonitor
+from audio_player import AudioPlayer
 
 DEFAULT_FREQ_HZ = 435000000     # config.h DEFAULT_TX_FREQUENCY_HZ -- what the
                                  # SATELLITE transmits its downlink/beacon on.
@@ -107,13 +119,19 @@ DEFAULT_FREQ_HZ = 435000000     # config.h DEFAULT_TX_FREQUENCY_HZ -- what the
                                  # the satellite LISTENS on for uplink commands --
                                  # a ground receiver needs the satellite's TX freq.)
 DEFAULT_SAMPLE_RATE = 240000    # exact 25 samples/symbol at 9600 baud
-CHUNK_SECONDS = 0.5
+DEFAULT_CHUNK_SECONDS = 0.5
 MAX_DEDUPE = 256
-LOCK_MISS_LIMIT = 16            # 16 x 0.5s = 8s -- outlasts a missed 5s beacon (see module docstring)
+DEFAULT_LOCK_MISS_LIMIT = 16    # x 0.5s chunk = 8s -- outlasts a missed 5s beacon (see module docstring)
 LOCK_PHASE_WINDOW = 1           # +-N phases around the locked one, in the narrow search
-SPECTRUM_NFFT = 4096
-WATERFALL_ROWS = 160
+DEFAULT_NFFT = 4096
+DEFAULT_WATERFALL_ROWS = 160
 STATS_HISTORY = 180             # rolling points kept for the link-quality graphs (~90s at 0.5s/chunk)
+CW_AUDIO_SAMPLE_RATE = 8000
+
+FFT_SIZES = [1024, 2048, 4096, 8192, 16384]
+WINDOW_FUNCS = ["hann", "hamming", "blackman", "rect"]
+COLORMAPS = ["viridis", "plasma", "inferno", "turbo", "grey"]
+CHUNK_CHOICES = [0.25, 0.5, 1.0, 2.0]
 
 # -- "backdoor" console aesthetic -----------------------------------------
 BG = "#05070a"
@@ -135,7 +153,7 @@ QPushButton {{ background-color: #0f1c17; border: 1px solid #1f4a3a; border-radi
 QPushButton:hover {{ background-color: #143528; border-color: {ACCENT}; }}
 QPushButton:pressed {{ background-color: #1c4a37; }}
 QPushButton:disabled {{ color: #2a4038; border-color: #17251f; }}
-QLineEdit, QComboBox, QPlainTextEdit, QTableWidget {{
+QLineEdit, QComboBox, QPlainTextEdit, QTableWidget, QSpinBox, QDoubleSpinBox {{
     background-color: {PANEL}; border: 1px solid #17251f; color: {FG}; selection-background-color: #1c4a37; }}
 QHeaderView::section {{ background-color: #0f1a15; color: {ACCENT}; border: 1px solid #17251f; padding: 3px; }}
 QTabWidget::pane {{ border: 1px solid #17251f; }}
@@ -144,6 +162,9 @@ QTabBar::tab:selected {{ background: #10241c; color: {ACCENT}; }}
 QCheckBox {{ color: {FG}; }}
 QStatusBar {{ background-color: {PANEL}; color: {FG_DIM}; }}
 QLabel {{ color: {FG}; }}
+QSlider::groove:horizontal {{ height: 6px; background: #17251f; border-radius: 3px; }}
+QSlider::handle:horizontal {{ background: {ACCENT}; width: 14px; margin: -5px 0; border-radius: 7px; }}
+QSlider::sub-page:horizontal {{ background: #1c4a37; border-radius: 3px; }}
 """
 
 
@@ -156,15 +177,33 @@ class RxWorker(QThread):
     frame_event = pyqtSignal(str)               # raw log lines
     packet_complete = pyqtSignal(dict, dict)     # (pkt, decoded)
     stats_update = pyqtSignal(dict)              # live signal-quality stats
+    cw_audio_ready = pyqtSignal(object)          # np.ndarray, float32 audio at CW_AUDIO_SAMPLE_RATE
+    cw_text_update = pyqtSignal(str)             # full decoded CW text so far
     error = pyqtSignal(str)
     finished_ok = pyqtSignal()
 
-    def __init__(self, source_kind, source_args, sample_rate, verbose=False):
+    def __init__(self, source_kind, source_args, sample_rate, verbose=False,
+                 nfft=DEFAULT_NFFT, window="hann", chunk_seconds=DEFAULT_CHUNK_SECONDS,
+                 lock_miss_limit=DEFAULT_LOCK_MISS_LIMIT):
         super().__init__()
         self.source_kind = source_kind
         self.source_args = source_args
         self.sample_rate = sample_rate
         self.verbose = verbose
+        self.nfft = nfft
+        self.window = window
+        self.chunk_seconds = chunk_seconds
+        self.lock_miss_limit = lock_miss_limit  # live-adjustable from the GUI thread (simple int, GIL-safe)
+        self.squelch_dbfs = -999.0              # live-adjustable; -999 = effectively off
+
+        # CW monitor -- created lazily (needs sample_rate, already known)
+        # but only actually run when cw_enabled is set from the GUI.
+        self.cw_enabled = False
+        self.cw_monitor = CwMonitor(sample_rate, bandwidth_hz=200.0, audio_rate=CW_AUDIO_SAMPLE_RATE,
+                                     sidetone_hz=morse.DEFAULT_SIDETONE_HZ, threshold_dbfs=-20.0)
+        self.cw_decode_enabled = False
+        self.cw_decoder = morse.MorseGateDecoder(CW_AUDIO_SAMPLE_RATE)
+
         self._running = True
         self.reassembler = dec.Reassembler()
         self._seen = deque(maxlen=MAX_DEDUPE)
@@ -207,8 +246,28 @@ class RxWorker(QThread):
         self._seen_set.add(frame_bytes)
         return True
 
+    def _process_cw(self, iq_no_overlap: np.ndarray):
+        """CW monitor runs on the fresh, non-overlapping samples only --
+        it's a stateful streaming filter (see cw_monitor.py), unlike the
+        GMSK path's overlap-padded buffer (that overlap exists to protect
+        FX.25 sync-word detection across chunk boundaries, an unrelated
+        concern to a continuous envelope filter)."""
+        if not self.cw_enabled or len(iq_no_overlap) == 0:
+            return
+        audio, gate = self.cw_monitor.process(iq_no_overlap)
+        self.cw_audio_ready.emit(audio)
+        if self.cw_decode_enabled:
+            self.cw_decoder.feed(gate)
+            self.cw_text_update.emit(self.cw_decoder.text)
+
     def _process_buffer(self, iq: np.ndarray):
-        if self._locked is not None:
+        power_db = gd.signal_power_dbfs(iq)
+        below_squelch = power_db < self.squelch_dbfs
+
+        if below_squelch:
+            candidates = []
+            searching = "squelched"
+        elif self._locked is not None:
             phase, invert, order = self._locked
             near = sorted({(phase + d) % gd.SPS for d in range(-LOCK_PHASE_WINDOW, LOCK_PHASE_WINDOW + 1)})
             candidates = gd.extract_candidate_frames(
@@ -273,16 +332,15 @@ class RxWorker(QThread):
                 f"len={info['payload_len']}")
             self.packet_complete.emit(info, decoded)
 
-        if self._locked is not None and chunk_decoded == 0:
+        if not below_squelch and self._locked is not None and chunk_decoded == 0:
             self._lock_miss_streak += 1
-            if self._lock_miss_streak >= LOCK_MISS_LIMIT:
+            if self._lock_miss_streak >= self.lock_miss_limit:
                 self.frame_event.emit(
                     f"[lock lost after {self._lock_miss_streak} empty windows -- re-scanning all combinations]")
                 self._locked = None
                 self._lock_miss_streak = 0
 
-        power_db = gd.signal_power_dbfs(iq)
-        spectrum = gd.spectrum_db(iq, nfft=SPECTRUM_NFFT)
+        spectrum = gd.spectrum_db(iq, nfft=self.nfft, window=self.window)
         self.stats_update.emit({
             "mode": searching,
             "locked_combo": self._locked,
@@ -303,38 +361,43 @@ class RxWorker(QThread):
                 self.frame_event.emit(f"--- loading {path} ({fmt}) ---")
                 iq = gd.read_iq_file_u8(path) if fmt == "u8" else gd.read_iq_file_cf32(path)
                 self.frame_event.emit(f"--- {len(iq)} samples loaded, processing ---")
-                chunk = int(self.sample_rate * CHUNK_SECONDS)
+                chunk = int(self.sample_rate * self.chunk_seconds)
                 overlap = int(self.sample_rate * 0.2)
                 pos = 0
                 while self._running and pos < len(iq):
                     start = max(0, pos - overlap)
                     end = min(len(iq), pos + chunk)
                     self._process_buffer(iq[start:end])
+                    self._process_cw(iq[pos:end])
                     pos += chunk
                 self.frame_event.emit("--- file processing complete ---")
                 self.finished_ok.emit()
                 return
 
             elif self.source_kind == "rtlsdr":
-                src = gd.RtlSdrSource(
+                self._sdr = gd.RtlSdrSource(
                     center_freq_hz=self.source_args["freq"],
                     sample_rate_hz=self.sample_rate,
                     gain=self.source_args.get("gain", "auto"),
                 )
+                ppm = self.source_args.get("ppm", 0)
+                if ppm:
+                    self._sdr.set_freq_correction_ppm(ppm)
                 self.frame_event.emit(
                     f"--- RTL-SDR streaming: {self.source_args['freq']/1e6:.4f} MHz "
                     f"@ {self.sample_rate} sps ---")
-                chunk = int(self.sample_rate * CHUNK_SECONDS)
+                chunk = int(self.sample_rate * self.chunk_seconds)
                 overlap_tail = np.array([], dtype=np.complex64)
                 overlap_n = int(self.sample_rate * 0.2)
                 try:
                     while self._running:
-                        block = src.read(chunk)
+                        block = self._sdr.read(chunk)
                         buf = np.concatenate([overlap_tail, block])
                         self._process_buffer(buf)
+                        self._process_cw(block)
                         overlap_tail = block[-overlap_n:]
                 finally:
-                    src.close()
+                    self._sdr.close()
                 self.finished_ok.emit()
                 return
 
@@ -343,15 +406,48 @@ class RxWorker(QThread):
         except Exception as e:  # noqa: broad -- worker thread, must not crash silently
             self.error.emit(f"{e}\n{traceback.format_exc()}")
 
+    # --- live parameter updates from the GUI thread (simple attribute
+    # writes/method calls; each is either a plain Python scalar or an
+    # operation the underlying library already treats as safe to call
+    # while streaming, e.g. pyrtlsdr's gain/freq_correction setters) ---
+    def set_gain(self, gain):
+        if hasattr(self, "_sdr"):
+            try:
+                self._sdr.set_gain(gain)
+            except Exception:
+                pass
+
+    def set_ppm(self, ppm: int):
+        if hasattr(self, "_sdr"):
+            try:
+                self._sdr.set_freq_correction_ppm(ppm)
+            except Exception:
+                pass
+
 
 class RfAnalyzerPanel(QWidget):
-    """Spectrum + waterfall + rolling link-quality graphs. Fed one
-    stats_update dict per chunk; owns no serial/demod state of its own."""
+    """Spectrum + waterfall + rolling link-quality graphs, plus a CW
+    Monitor tab. Fed one stats_update dict per chunk; owns no serial/demod
+    state of its own."""
 
-    def __init__(self, sample_rate: float):
+    lock_miss_limit_changed = pyqtSignal(int)
+    squelch_changed = pyqtSignal(float)
+    cw_params_changed = pyqtSignal(dict)
+    cw_enabled_changed = pyqtSignal(bool)
+    cw_decode_enabled_changed = pyqtSignal(bool)
+
+    def __init__(self, sample_rate: float, nfft: int = DEFAULT_NFFT,
+                 waterfall_rows: int = DEFAULT_WATERFALL_ROWS):
         super().__init__()
         self.sample_rate = sample_rate
+        self.nfft = nfft
+        self.waterfall_rows = waterfall_rows
         self._t = 0.0
+        self._ref_level_db = 0.0
+        self._avg_alpha = 0.0  # 0 = no smoothing
+        self._avg_spectrum = None
+        self._peak_hold_enabled = False
+        self._peak_hold = None
 
         self._power_hist = deque(maxlen=STATS_HISTORY)
         self._decoded_rate_hist = deque(maxlen=STATS_HISTORY)
@@ -361,7 +457,7 @@ class RfAnalyzerPanel(QWidget):
         self._cum_decoded = 0
         self._cum_rejected = 0
 
-        self._waterfall = np.full((WATERFALL_ROWS, SPECTRUM_NFFT), -140.0, dtype=np.float32)
+        self._waterfall = np.full((waterfall_rows, nfft), -140.0, dtype=np.float32)
 
         pg.setConfigOptions(antialias=True)
 
@@ -374,27 +470,87 @@ class RfAnalyzerPanel(QWidget):
         spec_tab = QWidget()
         spec_layout = QVBoxLayout(spec_tab)
 
+        spec_controls = QHBoxLayout()
+        spec_controls.addWidget(QLabel("Colormap:"))
+        self.colormap_combo = QComboBox()
+        self.colormap_combo.addItems(COLORMAPS)
+        self.colormap_combo.currentTextChanged.connect(self._on_colormap_changed)
+        spec_controls.addWidget(self.colormap_combo)
+
+        spec_controls.addWidget(QLabel("Ref level (dB):"))
+        self.ref_level_spin = QSpinBox()
+        self.ref_level_spin.setRange(-60, 60)
+        self.ref_level_spin.setValue(0)
+        self.ref_level_spin.valueChanged.connect(self._on_ref_level_changed)
+        spec_controls.addWidget(self.ref_level_spin)
+
+        spec_controls.addWidget(QLabel("Averaging:"))
+        self.avg_slider = QSlider(Qt.Orientation.Horizontal if PYQT_VERSION == 6 else Qt.Horizontal)
+        self.avg_slider.setRange(0, 95)
+        self.avg_slider.setValue(0)
+        self.avg_slider.setMaximumWidth(120)
+        self.avg_slider.valueChanged.connect(lambda v: setattr(self, "_avg_alpha", v / 100.0))
+        spec_controls.addWidget(self.avg_slider)
+
+        self.peak_hold_check = QCheckBox("Peak hold")
+        self.peak_hold_check.toggled.connect(self._on_peak_hold_toggled)
+        spec_controls.addWidget(self.peak_hold_check)
+        self.peak_reset_btn = QPushButton("Reset peaks")
+        self.peak_reset_btn.clicked.connect(self._reset_peak_hold)
+        spec_controls.addWidget(self.peak_reset_btn)
+
+        spec_controls.addStretch(1)
+        self.marker_label = QLabel("Marker: --")
+        self.marker_label.setStyleSheet(f"color: {ACCENT}; font-weight: bold;")
+        spec_controls.addWidget(self.marker_label)
+        spec_layout.addLayout(spec_controls)
+
+        squelch_row = QHBoxLayout()
+        squelch_row.addWidget(QLabel("Squelch (dBFS):"))
+        self.squelch_slider = QSlider(Qt.Orientation.Horizontal if PYQT_VERSION == 6 else Qt.Horizontal)
+        self.squelch_slider.setRange(-140, 0)
+        self.squelch_slider.setValue(-140)  # off
+        self.squelch_slider.valueChanged.connect(self._on_squelch_changed)
+        squelch_row.addWidget(self.squelch_slider, 1)
+        self.squelch_value_label = QLabel("off")
+        self.squelch_value_label.setMinimumWidth(90)
+        squelch_row.addWidget(self.squelch_value_label)
+
+        squelch_row.addWidget(QLabel("Lock miss limit:"))
+        self.lock_miss_spin = QSpinBox()
+        self.lock_miss_spin.setRange(1, 200)
+        self.lock_miss_spin.setValue(DEFAULT_LOCK_MISS_LIMIT)
+        self.lock_miss_spin.setToolTip(
+            "How many empty 'locked' windows before falling back to a full brute-force re-scan. "
+            "Should comfortably outlast the satellite's beacon interval (see module docstring).")
+        self.lock_miss_spin.valueChanged.connect(self.lock_miss_limit_changed.emit)
+        squelch_row.addWidget(self.lock_miss_spin)
+        spec_layout.addLayout(squelch_row)
+
         self.spectrum_plot = pg.PlotWidget(title="Live spectrum (dB, centered on tuned frequency)")
         self.spectrum_plot.setBackground(PANEL)
         self.spectrum_plot.showGrid(x=True, y=True, alpha=0.25)
         self.spectrum_plot.setLabel("bottom", "Offset from center", units="Hz")
         self.spectrum_plot.setLabel("left", "Magnitude", units="dB")
-        freqs = np.fft.fftshift(np.fft.fftfreq(SPECTRUM_NFFT, d=1.0 / sample_rate))
+        freqs = np.fft.fftshift(np.fft.fftfreq(nfft, d=1.0 / sample_rate))
         self._freqs = freqs
-        self.spectrum_curve = self.spectrum_plot.plot(freqs, np.full(SPECTRUM_NFFT, -140.0), pen=pg.mkPen(FG, width=1.4))
+        self.spectrum_curve = self.spectrum_plot.plot(freqs, np.full(nfft, -140.0), pen=pg.mkPen(FG, width=1.4))
+        self.peak_curve = self.spectrum_plot.plot(freqs, np.full(nfft, -140.0), pen=pg.mkPen(WARN, width=1.0))
+        self.peak_curve.setVisible(False)
         spec_layout.addWidget(self.spectrum_plot, 2)
+        self._mouse_proxy = pg.SignalProxy(
+            self.spectrum_plot.scene().sigMouseMoved, rateLimit=30, slot=self._on_mouse_moved)
 
         self.waterfall_plot = pg.PlotWidget(title="Waterfall (scrolling, newest at bottom)")
         self.waterfall_plot.setBackground(PANEL)
         self.waterfall_plot.setLabel("bottom", "Offset from center", units="Hz")
         self.waterfall_img = pg.ImageItem()
         self.waterfall_plot.addItem(self.waterfall_img)
-        cmap = pg.colormap.get("viridis")
-        self.waterfall_img.setColorMap(cmap)
+        self.waterfall_img.setColorMap(pg.colormap.get("viridis"))
         self.waterfall_img.setLevels((-100, -20))
         half_span = sample_rate / 2.0
-        self.waterfall_img.setRect(pg.QtCore.QRectF(-half_span, 0, sample_rate, WATERFALL_ROWS))
-        self.waterfall_plot.setYRange(0, WATERFALL_ROWS)
+        self.waterfall_img.setRect(pg.QtCore.QRectF(-half_span, 0, sample_rate, waterfall_rows))
+        self.waterfall_plot.setYRange(0, waterfall_rows)
         self.waterfall_plot.setXRange(-half_span, half_span)
         self.waterfall_plot.getPlotItem().hideAxis("left")
         spec_layout.addWidget(self.waterfall_plot, 3)
@@ -428,9 +584,108 @@ class RfAnalyzerPanel(QWidget):
 
         tabs.addTab(lq_tab, "Link Quality")
 
-    def reset(self, sample_rate: float):
+        # --- CW Monitor tab ---
+        cw_tab = QWidget()
+        cw_form = QFormLayout(cw_tab)
+
+        self.cw_enable_check = QCheckBox("Enable CW Monitor (real envelope detection + audible sidetone)")
+        self.cw_enable_check.toggled.connect(self.cw_enabled_changed.emit)
+        cw_form.addRow(self.cw_enable_check)
+
+        self.cw_offset_spin = QSpinBox()
+        self.cw_offset_spin.setRange(-100000, 100000)
+        self.cw_offset_spin.setValue(0)
+        self.cw_offset_spin.setSuffix(" Hz")
+        self.cw_offset_spin.setToolTip(
+            "Offset from the tuned center frequency. The CW beacon shares the "
+            "GMSK downlink's frequency (RadioApp_KeyCw), so 0 Hz is the right default.")
+        self.cw_offset_spin.valueChanged.connect(self._emit_cw_params)
+        cw_form.addRow("Offset:", self.cw_offset_spin)
+
+        self.cw_bw_spin = QSpinBox()
+        self.cw_bw_spin.setRange(20, 5000)
+        self.cw_bw_spin.setValue(200)
+        self.cw_bw_spin.setSuffix(" Hz")
+        self.cw_bw_spin.valueChanged.connect(self._emit_cw_params)
+        cw_form.addRow("Bandwidth:", self.cw_bw_spin)
+
+        self.cw_threshold_slider = QSlider(Qt.Orientation.Horizontal if PYQT_VERSION == 6 else Qt.Horizontal)
+        self.cw_threshold_slider.setRange(-80, 0)
+        self.cw_threshold_slider.setValue(-20)
+        self.cw_threshold_slider.valueChanged.connect(self._emit_cw_params)
+        cw_form.addRow("Threshold (dBFS):", self.cw_threshold_slider)
+
+        self.cw_pitch_spin = QSpinBox()
+        self.cw_pitch_spin.setRange(200, 1200)
+        self.cw_pitch_spin.setValue(morse.DEFAULT_SIDETONE_HZ)
+        self.cw_pitch_spin.setSuffix(" Hz")
+        self.cw_pitch_spin.valueChanged.connect(self._emit_cw_params)
+        cw_form.addRow("Sidetone pitch:", self.cw_pitch_spin)
+
+        self.cw_volume_slider = QSlider(Qt.Orientation.Horizontal if PYQT_VERSION == 6 else Qt.Horizontal)
+        self.cw_volume_slider.setRange(0, 100)
+        self.cw_volume_slider.setValue(30)
+        self.cw_volume_slider.valueChanged.connect(self._emit_cw_params)
+        cw_form.addRow("Volume:", self.cw_volume_slider)
+
+        self.cw_decode_check = QCheckBox("Auto-decode to text")
+        self.cw_decode_check.toggled.connect(self.cw_decode_enabled_changed.emit)
+        cw_form.addRow(self.cw_decode_check)
+
+        self.cw_decoded_text = QPlainTextEdit()
+        self.cw_decoded_text.setReadOnly(True)
+        self.cw_decoded_text.setMaximumHeight(80)
+        cw_form.addRow("Decoded:", self.cw_decoded_text)
+
+        self.cw_env_label = QLabel("Envelope: --")
+        cw_form.addRow(self.cw_env_label)
+
+        tabs.addTab(cw_tab, "CW Monitor")
+
+    def _emit_cw_params(self, *_args):
+        self.cw_params_changed.emit({
+            "offset_hz": float(self.cw_offset_spin.value()),
+            "bandwidth_hz": float(self.cw_bw_spin.value()),
+            "threshold_dbfs": float(self.cw_threshold_slider.value()),
+            "sidetone_hz": float(self.cw_pitch_spin.value()),
+            "volume": self.cw_volume_slider.value() / 100.0,
+        })
+
+    def _on_colormap_changed(self, name: str):
+        self.waterfall_img.setColorMap(pg.colormap.get(name if name != "grey" else "greys"))
+
+    def _on_ref_level_changed(self, v: int):
+        self._ref_level_db = float(v)
+
+    def _on_peak_hold_toggled(self, checked: bool):
+        self._peak_hold_enabled = checked
+        self.peak_curve.setVisible(checked)
+        if checked and self._peak_hold is None:
+            self._peak_hold = np.full(self.nfft, -140.0, dtype=np.float32)
+
+    def _reset_peak_hold(self):
+        if self._peak_hold is not None:
+            self._peak_hold[:] = -140.0
+
+    def _on_squelch_changed(self, v: int):
+        self.squelch_value_label.setText("off" if v <= -140 else f"{v} dBFS")
+        self.squelch_changed.emit(float(v) if v > -140 else -999.0)
+
+    def _on_mouse_moved(self, evt):
+        pos = evt[0]
+        if not self.spectrum_plot.sceneBoundingRect().contains(pos):
+            return
+        point = self.spectrum_plot.getPlotItem().vb.mapSceneToView(pos)
+        freq_hz, mag_db = point.x(), point.y()
+        self.marker_label.setText(f"Marker: {freq_hz:+.1f} Hz, {mag_db:.1f} dB")
+
+    def reconfigure(self, sample_rate: float, nfft: int, waterfall_rows: int):
         self.sample_rate = sample_rate
+        self.nfft = nfft
+        self.waterfall_rows = waterfall_rows
         self._t = 0.0
+        self._avg_spectrum = None
+        self._peak_hold = None
         self._power_hist.clear()
         self._decoded_rate_hist.clear()
         self._rejected_rate_hist.clear()
@@ -438,23 +693,42 @@ class RfAnalyzerPanel(QWidget):
         self._time_hist.clear()
         self._cum_decoded = 0
         self._cum_rejected = 0
-        self._waterfall[:] = -140.0
-        freqs = np.fft.fftshift(np.fft.fftfreq(SPECTRUM_NFFT, d=1.0 / sample_rate))
+        self._waterfall = np.full((waterfall_rows, nfft), -140.0, dtype=np.float32)
+        freqs = np.fft.fftshift(np.fft.fftfreq(nfft, d=1.0 / sample_rate))
         self._freqs = freqs
         half_span = sample_rate / 2.0
-        self.waterfall_img.setRect(pg.QtCore.QRectF(-half_span, 0, sample_rate, WATERFALL_ROWS))
+        self.waterfall_img.setRect(pg.QtCore.QRectF(-half_span, 0, sample_rate, waterfall_rows))
         self.waterfall_plot.setXRange(-half_span, half_span)
         self.spectrum_plot.setXRange(-half_span, half_span)
 
     def on_stats(self, stats: dict):
         spectrum = stats.get("spectrum")
         if spectrum is not None:
-            self.spectrum_curve.setData(self._freqs, spectrum)
+            if self._avg_alpha > 0:
+                if self._avg_spectrum is None or len(self._avg_spectrum) != len(spectrum):
+                    self._avg_spectrum = spectrum.copy()
+                else:
+                    a = self._avg_alpha
+                    self._avg_spectrum = a * self._avg_spectrum + (1 - a) * spectrum
+                display_spectrum = self._avg_spectrum
+            else:
+                display_spectrum = spectrum
+
+            shown = display_spectrum + self._ref_level_db
+            self.spectrum_curve.setData(self._freqs, shown)
+
+            if self._peak_hold_enabled:
+                if self._peak_hold is None or len(self._peak_hold) != len(spectrum):
+                    self._peak_hold = spectrum.copy()
+                else:
+                    np.maximum(self._peak_hold, spectrum, out=self._peak_hold)
+                self.peak_curve.setData(self._freqs, self._peak_hold + self._ref_level_db)
+
             self._waterfall = np.roll(self._waterfall, -1, axis=0)
             self._waterfall[-1, :] = spectrum
             self.waterfall_img.setImage(self._waterfall.T, autoLevels=False)
 
-        self._t += CHUNK_SECONDS
+        self._t += stats.get("chunk_seconds", DEFAULT_CHUNK_SECONDS)
         self._time_hist.append(self._t)
         self._power_hist.append(stats["signal_power_dbfs"] if stats["signal_power_dbfs"] == stats["signal_power_dbfs"] else -140.0)
         self._decoded_rate_hist.append(stats["chunk_decoded"])
@@ -475,10 +749,11 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("S2S2 Nucleo RX -- RTL-SDR GMSK/AX.25/FX.25 Decoder")
-        self.resize(1500, 900)
+        self.resize(1600, 950)
         self.worker = None
         self.packets = []
         self.detail_positions = []
+        self._audio = AudioPlayer(sample_rate=CW_AUDIO_SAMPLE_RATE)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -510,8 +785,20 @@ class MainWindow(QMainWindow):
         cfg_layout.addWidget(self.rate_combo)
 
         self.gain_edit = QLineEdit("auto")
+        self.gain_edit.setToolTip("RTL-SDR gain in dB, or 'auto'. Live-adjustable while running via Apply.")
         cfg_layout.addWidget(QLabel("Gain:"))
         cfg_layout.addWidget(self.gain_edit)
+        self.gain_apply_btn = QPushButton("Apply")
+        self.gain_apply_btn.clicked.connect(self._apply_gain_live)
+        cfg_layout.addWidget(self.gain_apply_btn)
+
+        self.ppm_spin = QSpinBox()
+        self.ppm_spin.setRange(-200, 200)
+        self.ppm_spin.setValue(0)
+        self.ppm_spin.setToolTip("RTL-SDR crystal frequency correction, parts per million. Live-adjustable.")
+        self.ppm_spin.valueChanged.connect(self._apply_ppm_live)
+        cfg_layout.addWidget(QLabel("PPM:"))
+        cfg_layout.addWidget(self.ppm_spin)
 
         self.file_edit = QLineEdit()
         self.file_edit.setPlaceholderText("path to .iq (u8) or .cfile (cf32) capture")
@@ -523,19 +810,48 @@ class MainWindow(QMainWindow):
         cfg_layout.addWidget(self.file_browse_btn)
         cfg_layout.addWidget(self.file_fmt_combo)
 
+        outer.addWidget(cfg_box)
+
+        cfg2_box = QGroupBox("Analyzer setup  (applies at Start)")
+        cfg2_layout = QHBoxLayout(cfg2_box)
+
+        cfg2_layout.addWidget(QLabel("FFT size:"))
+        self.nfft_combo = QComboBox()
+        self.nfft_combo.addItems([str(n) for n in FFT_SIZES])
+        self.nfft_combo.setCurrentText(str(DEFAULT_NFFT))
+        cfg2_layout.addWidget(self.nfft_combo)
+
+        cfg2_layout.addWidget(QLabel("Window:"))
+        self.window_combo = QComboBox()
+        self.window_combo.addItems(WINDOW_FUNCS)
+        cfg2_layout.addWidget(self.window_combo)
+
+        cfg2_layout.addWidget(QLabel("Waterfall rows:"))
+        self.waterfall_rows_spin = QSpinBox()
+        self.waterfall_rows_spin.setRange(40, 500)
+        self.waterfall_rows_spin.setValue(DEFAULT_WATERFALL_ROWS)
+        cfg2_layout.addWidget(self.waterfall_rows_spin)
+
+        cfg2_layout.addWidget(QLabel("Chunk (s):"))
+        self.chunk_combo = QComboBox()
+        self.chunk_combo.addItems([str(c) for c in CHUNK_CHOICES])
+        self.chunk_combo.setCurrentText(str(DEFAULT_CHUNK_SECONDS))
+        cfg2_layout.addWidget(self.chunk_combo)
+
         self.verbose_check = QCheckBox("Verbose log")
         self.verbose_check.setToolTip(
             "Log every rejected sync candidate, not just successful decodes and "
             "lock state changes. Off by default -- with the full brute-force search "
-            "(before lock is acquired) this can be dozens of lines per 0.5s chunk, "
+            "(before lock is acquired) this can be dozens of lines per chunk, "
             "almost all of which are combinations that were never going to be right.")
-        cfg_layout.addWidget(self.verbose_check)
+        cfg2_layout.addWidget(self.verbose_check)
 
+        cfg2_layout.addStretch(1)
         self.start_btn = QPushButton("Start")
         self.start_btn.clicked.connect(self.toggle_run)
-        cfg_layout.addWidget(self.start_btn)
+        cfg2_layout.addWidget(self.start_btn)
 
-        outer.addWidget(cfg_box)
+        outer.addWidget(cfg2_box)
         self._on_source_changed(self.source_combo.currentText())
 
         # --- live signal-quality stats ---
@@ -596,9 +912,14 @@ class MainWindow(QMainWindow):
 
         main_split.addWidget(left)
 
-        self.analyzer = RfAnalyzerPanel(DEFAULT_SAMPLE_RATE)
+        self.analyzer = RfAnalyzerPanel(DEFAULT_SAMPLE_RATE, DEFAULT_NFFT, DEFAULT_WATERFALL_ROWS)
+        self.analyzer.lock_miss_limit_changed.connect(self._on_lock_miss_limit_changed)
+        self.analyzer.squelch_changed.connect(self._on_squelch_changed)
+        self.analyzer.cw_params_changed.connect(self._on_cw_params_changed)
+        self.analyzer.cw_enabled_changed.connect(self._on_cw_enabled_changed)
+        self.analyzer.cw_decode_enabled_changed.connect(self._on_cw_decode_enabled_changed)
         main_split.addWidget(self.analyzer)
-        main_split.setSizes([850, 650])
+        main_split.setSizes([900, 700])
 
         outer.addWidget(main_split, 1)
 
@@ -614,6 +935,8 @@ class MainWindow(QMainWindow):
         self.file_fmt_combo.setVisible(is_file)
         self.freq_edit.setVisible(not is_file)
         self.gain_edit.setVisible(not is_file)
+        self.gain_apply_btn.setVisible(not is_file)
+        self.ppm_spin.setVisible(not is_file)
 
     def _browse_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select IQ capture")
@@ -663,15 +986,35 @@ class MainWindow(QMainWindow):
             gain_text = self.gain_edit.text().strip()
             gain = gain_text if gain_text == "auto" else float(gain_text)
             source_kind = "rtlsdr"
-            source_args = {"freq": freq, "gain": gain}
+            source_args = {"freq": freq, "gain": gain, "ppm": self.ppm_spin.value()}
 
-        self.analyzer.reset(sample_rate)
+        nfft = int(self.nfft_combo.currentText())
+        window = self.window_combo.currentText()
+        waterfall_rows = self.waterfall_rows_spin.value()
+        chunk_seconds = float(self.chunk_combo.currentText())
+
+        self.analyzer.reconfigure(sample_rate, nfft, waterfall_rows)
+        self._chunk_seconds = chunk_seconds
+
+        try:
+            self._audio.start()
+        except Exception as e:  # noqa: broad -- missing/unavailable audio device must not block RF reception
+            self.append_log(f"--- CW audio unavailable: {e} ---")
 
         self.worker = RxWorker(source_kind, source_args, sample_rate,
-                                verbose=self.verbose_check.isChecked())
+                                verbose=self.verbose_check.isChecked(),
+                                nfft=nfft, window=window, chunk_seconds=chunk_seconds,
+                                lock_miss_limit=self.analyzer.lock_miss_spin.value())
+        self.worker.cw_enabled = self.analyzer.cw_enable_check.isChecked()
+        self.worker.cw_decode_enabled = self.analyzer.cw_decode_check.isChecked()
+        self.worker.squelch_dbfs = -999.0 if self.analyzer.squelch_slider.value() <= -140 else float(self.analyzer.squelch_slider.value())
+        self.analyzer._emit_cw_params()
+
         self.worker.frame_event.connect(self.append_log)
         self.worker.packet_complete.connect(self._on_packet_complete)
         self.worker.stats_update.connect(self._on_stats_update)
+        self.worker.cw_audio_ready.connect(self._on_cw_audio_ready)
+        self.worker.cw_text_update.connect(self._on_cw_text_update)
         self.worker.error.connect(self._on_worker_error)
         self.worker.finished_ok.connect(self._on_worker_finished)
         self.worker.start()
@@ -695,8 +1038,11 @@ class MainWindow(QMainWindow):
         self.start_btn.setEnabled(True)
         self.source_combo.setEnabled(True)
         self.status.showMessage("Idle")
+        self._audio.stop()
 
     def _on_stats_update(self, stats: dict):
+        stats = dict(stats)
+        stats["chunk_seconds"] = getattr(self, "_chunk_seconds", DEFAULT_CHUNK_SECONDS)
         self.stat_labels["mode"].setText(stats["mode"])
         combo = stats["locked_combo"]
         self.stat_labels["locked_combo"].setText(
@@ -710,6 +1056,50 @@ class MainWindow(QMainWindow):
         rate = (100.0 * stats["decoded_total"] / total_attempts) if total_attempts else 0.0
         self.stat_labels["success_rate"].setText(f"{rate:.0f}%")
         self.analyzer.on_stats(stats)
+
+    def _on_cw_audio_ready(self, audio):
+        self._audio.push(audio)
+        if self.worker is not None:
+            self.analyzer.cw_env_label.setText(f"Envelope: {self.worker.cw_monitor.last_env_dbfs:.1f} dBFS")
+
+    def _on_cw_text_update(self, text: str):
+        self.analyzer.cw_decoded_text.setPlainText(text)
+        sb = self.analyzer.cw_decoded_text.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def _on_lock_miss_limit_changed(self, v: int):
+        if self.worker is not None:
+            self.worker.lock_miss_limit = v
+
+    def _on_squelch_changed(self, v: float):
+        if self.worker is not None:
+            self.worker.squelch_dbfs = v
+
+    def _on_cw_params_changed(self, params: dict):
+        if self.worker is not None:
+            self.worker.cw_monitor.reconfigure(**params)
+
+    def _on_cw_enabled_changed(self, enabled: bool):
+        if self.worker is not None:
+            self.worker.cw_enabled = enabled
+
+    def _on_cw_decode_enabled_changed(self, enabled: bool):
+        if self.worker is not None:
+            self.worker.cw_decode_enabled = enabled
+            if enabled:
+                self.worker.cw_decoder.reset()
+
+    def _apply_gain_live(self):
+        if self.worker is None:
+            return
+        text = self.gain_edit.text().strip()
+        gain = text if text == "auto" else float(text)
+        self.worker.set_gain(gain)
+        self.append_log(f"--- gain set to {gain} ---")
+
+    def _apply_ppm_live(self, ppm: int):
+        if self.worker is not None:
+            self.worker.set_ppm(ppm)
 
     def _on_packet_complete(self, pkt: dict, decoded: dict):
         row = self.table.rowCount()
@@ -754,6 +1144,7 @@ class MainWindow(QMainWindow):
         if self.worker is not None:
             self.worker.stop()
             self.worker.wait(2000)
+        self._audio.stop()
         event.accept()
 
 

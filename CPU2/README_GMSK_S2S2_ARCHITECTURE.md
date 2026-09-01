@@ -440,42 +440,58 @@ guessing at the cause of corrupted bytes.
 
 #### `tools/s2s2_tx_gui.py` -- PyQt "backdoor" control console
 
-A dark-themed PyQt5/PyQt6 control panel over the same DEBUG_BUILD UART
-commands this whole section describes -- `TX <hex>`, `POWER <dbm>`, and
-`BEACON ON`/`OFF` -- with nothing this GUI can do that the firmware doesn't
-already expose over a plain serial terminal; it just makes doing it
-point-and-click instead of hand-typed. A production-built board answers all
-three with `UNKNOWN COMMAND`, GUI or no GUI.
+A dark-themed PyQt5/PyQt6 control panel over both the DEBUG_BUILD-only UART
+backdoor (`TX <hex>`, `POWER <dbm>`, `BEACON ON`/`OFF`) and the ground
+station's real, always-on CLI keywords (`satellite/gs_main.c`) -- nothing
+this GUI can do that the firmware doesn't already expose over a plain
+serial terminal; it just makes doing it point-and-click instead of
+hand-typed. A production-built board answers the DEBUG_BUILD-only commands
+with `UNKNOWN COMMAND`; the Command Center buttons work on either build.
 
 ```bash
-pip install pyserial pyqtgraph PyQt6      # or PyQt5 -- the script picks whichever is installed
+pip install pyserial pyqtgraph PyQt6 sounddevice   # or PyQt5; sounddevice is optional (CW sidetone)
 python3 tools/s2s2_tx_gui.py
 ```
 
 1. Refresh the port list, pick the Nucleo's port, pick the baud rate that
    matches the flashed firmware (115200 by default, 9600 if built with
    `-DUART_DEBUG_BAUD_9600`), click **Connect**.
-2. **Send panel (left):** leave **Mode: Text** for plain messages (encoded
-   as UTF-8 automatically), or switch to **Mode: Hex** to send exact raw
-   bytes. Type into the box, press Enter or click **Send** -- the byte
-   counter turns red past the 659-byte limit. **Resend last** repeats the
-   most recent payload; **Send file...** sends a local file's raw bytes.
-3. **Radio Control panel (right):** drag the **TX power** slider (-9..+22
+2. **Command Center:** one button per real ground-station CLI keyword --
+   `COMMAND` (request a burst), `HEARTBEAT`, `HEALTH`, `HOUSEKEEPING`,
+   `BEACON1`, `BEACON2`, `ADCS`, `CAMERA`, `DOWNLOAD`, `SATLOG`,
+   `DIGIPEATER` (starts the digipeater mission, see `DPM_ARCHITECTURE.md`),
+   `RETRANSMIT`, `ABORT`. These are the satellite's real command set --
+   they work on a production-built board too.
+3. **Raw TX mode (left):** leave **Text** for plain messages (encoded as
+   UTF-8 automatically), or switch to **Hex** to send exact raw bytes --
+   this is the DEBUG_BUILD-only `TX <hex>` backdoor. Type into the box,
+   press Enter or click **Send** -- the byte counter turns red past the
+   659-byte limit. **Resend last** repeats the most recent payload;
+   **Send file...** sends a local file's raw bytes.
+4. **Radio Control panel (right):** drag the **TX power** slider (-9..+22
    dBm, the SX126x HP-PA's real range) and click **Apply** to send
    `POWER <dbm>` -- the label below only turns confirmed-green once the
    board's own `RadioApp_SetTxPower: N dBm` reply is parsed back out of the
    serial stream, not just on click. **Beacon ON/OFF** buttons send
-   `BEACON ON`/`BEACON OFF` the same way, confirmed from the board's own
-   echoed reply.
-4. **TX Activity panel:** a live frames/sec bar graph and cumulative
+   `BEACON ON`/`BEACON OFF`, now silencing/resuming *all four* of the
+   satellite's periodic beacons (5s text ping, 60s CW, 30s Beacon1/2) --
+   confirmed from the board's own echoed reply.
+5. **CW Sidetone panel:** when the satellite reports sending a CW beacon
+   (`CW BEACON TX: "..."` log line), checking **Play audible Morse** makes
+   this GUI *synthesize and play* that exact message as a real Morse
+   sidetone, timed to match the firmware's own `cw_beacon.c` table
+   (`tools/morse.py`) -- WPM, sidetone pitch, and volume are all
+   adjustable, and **Test tone** plays a sample phrase immediately. This is
+   a simulated reproduction of what was sent, not a live over-the-air
+   recording -- for that, see the RX GUI's CW Monitor below.
+6. **TX Activity panel:** a live frames/sec bar graph and cumulative
    bytes-sent line graph, both driven by parsing the firmware's own
    `RadioApp_Send: len=N` log line -- so it plots *every* real transmission
    (automatic beacons, telemetry bursts, manual `TX`) not just what this GUI
    itself sent.
-5. Everything the Nucleo prints -- including the firmware's own boot banner,
-   `TX ACK`/`RX TELEMETRY` logs, and the `OK sent (N bytes)` reply to your
-   own `TX` command -- shows up in the log pane live, color-coded (green =
-   sent/OK, red = ERR/FAIL, dim = connect/disconnect).
+7. Everything the Nucleo prints shows up in the log pane live, color-coded
+   (green = sent/OK, red = ERR/FAIL, dim = connect/disconnect); **Timestamps**
+   and **Autoscroll** are both toggleable.
 
 ### `tools/s2s2_rx_gui.py` -- RTL-SDR PyQt Receiver GUI
 
@@ -505,6 +521,7 @@ whichever convention the real SX126x turns out to use.
 pip install numpy scipy pyqtgraph PyQt6      # or PyQt5
 pip install pyrtlsdr                         # optional -- only needed for a live dongle,
                                               # not for the "IQ file" source below
+pip install sounddevice                      # optional -- CW Monitor audio
 python3 tools/s2s2_rx_gui.py
 ```
 
@@ -512,9 +529,11 @@ python3 tools/s2s2_rx_gui.py
    `DEFAULT_TX_FREQUENCY_HZ`, 435.000 MHz -- the satellite's downlink/beacon
    frequency, i.e. what you actually want to receive; its `DEFAULT_RX_FREQUENCY_HZ`,
    437.375 MHz, is what the *satellite* listens on for ground-to-satellite
-   uplink commands, not useful here) and sample rate (`240000` is exactly
-   25 samples/symbol at 9600 baud and is the recommended default; other rates
-   work too, just resampled). Click **Start**.
+   uplink commands, not useful here), sample rate, gain, and **PPM**
+   (crystal frequency correction -- live-adjustable while running). Pick
+   **FFT size** (1024-16384), **window function** (Hann/Hamming/Blackman/
+   rect), **waterfall rows**, and **chunk length** in the Analyzer setup row
+   -- these apply at Start. Click **Start**.
 2. **Source: IQ file** -- point it at a raw capture: `rtl_sdr`'s own `u8`
    format, or a GNU Radio-style interleaved-float32 `.cfile`. No hardware
    needed at all for this path -- see below.
@@ -525,19 +544,31 @@ python3 tools/s2s2_rx_gui.py
    or raw hex + ASCII for `TYPE_RAW`/unrecognized payloads. The log pane below
    shows every frame attempt, including rejections and which
    polarity/bit-order/phase combination a successful decode locked onto.
-4. **RF Analyzer panel (right side):**
-   * **Spectrum / Waterfall tab** -- a live FFT of the tuned IQ (4096-point,
-     Hann-windowed, one snapshot per 0.5s chunk -- plenty for a real-time
-     display) as both a line plot and a scrolling waterfall, so you can
-     visually confirm the satellite's carrier is where you expect and how far
-     above the noise floor it sits, independent of whether the demod is
-     currently decoding anything.
-   * **Link Quality tab** -- three rolling graphs: signal power (dBFS),
+4. **RF Analyzer panel (right side), three tabs:**
+   * **Spectrum / Waterfall** -- a live FFT of the tuned IQ as both a line
+     plot and a scrolling waterfall (colormap selectable: viridis/plasma/
+     inferno/turbo/grey), with an adjustable **reference level**, **spectrum
+     averaging** (exponential smoothing), **peak hold** (with reset), and a
+     mouse-hover **marker** readout (frequency + magnitude at the cursor).
+     **Squelch** (dBFS) gates the demod search and CW monitor below a set
+     power -- both a CPU saver on a dead channel and a way to keep the log
+     quiet. **Lock miss limit** (see below) is live-adjustable here too.
+   * **Link Quality** -- three rolling graphs: signal power (dBFS),
      decoded/rejected count *per chunk* (not cumulative), and cumulative
      success rate over time. That last one is the same percentage in the
      stats bar above, but watchable as it changes instead of a single
      misleading lifetime number -- see the next paragraph for why that
      distinction matters.
+   * **CW Monitor** -- turns the satellite's real Morse CW beacon (an
+     unmodulated, on/off-keyed carrier, `core/Src/cw_beacon.c` via
+     `RadioApp_KeyCw`) into an audible sidetone via genuine envelope
+     detection over the live IQ (`tools/cw_monitor.py`) -- not a
+     simulation, the real-signal counterpart to the TX GUI's synthesized
+     playback. Offset defaults to 0 Hz (the CW beacon shares the GMSK
+     downlink's frequency); bandwidth, threshold, sidetone pitch, and
+     volume are all live-adjustable. **Auto-decode** runs a streaming
+     Morse decoder (`morse.MorseGateDecoder`, adaptive to the actual WPM,
+     not hardcoded) and shows recovered text live.
 
 **On "success rate" being low:** it's computed as
 `decoded / (decoded + rejected)`, where `rejected` counts every sync-word

@@ -44,7 +44,10 @@
  * DcFree = RADIO_DC_FREE_OFF (whitening OFF -- HDLC bit-stuffing already
  * provides transition density, and a real ground station has no way to
  * de-whiten Semtech's proprietary whitening sequence). See radio_app.c.
- */
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-30
+*/
 #ifndef FX25_H
 #define FX25_H
 

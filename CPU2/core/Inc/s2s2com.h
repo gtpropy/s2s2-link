@@ -21,7 +21,10 @@
  * still need real S2S2 numbers.
  *
  * Bare C: no malloc, no libc dependency beyond stdint.h / string.h.
- */
+ *
+ * @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+ * @date   2026-08-30
+*/
 #ifndef S2S2COM_H
 #define S2S2COM_H
 

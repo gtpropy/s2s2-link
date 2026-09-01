@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# @author Ryan Dhakal, SOS Hermann Gmeiner School, Gandaki
+# @date   2026-08-30
 """
 make_demo_capture.py -- builds a synthetic .cfile (interleaved float32
 I/Q, GNU Radio convention) containing a handful of real firmware-encoded

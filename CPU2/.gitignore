@@ -7,3 +7,6 @@
 *.d
 *.su
 Debug/
+
+# Shared auth key (see core/Inc/secrets.example.h) -- never commit
+core/Inc/secrets.h
