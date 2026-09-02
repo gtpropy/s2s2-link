@@ -806,6 +806,45 @@ int main(void)
                 int dbm = atoi(command + 6);
                 RadioApp_SetTxPower((int8_t)dbm);
             }
+            else if (str_starts_ieq(command, "CMD "))
+            {
+                /* CMD <opcode_hex> <subsys_hex> <data_id_hex> <addr_hex> <num_packets_dec>
+                   -- arbitrary authenticated command, any opcode/subsystem/
+                   data_id/address/num_packets, not just the fixed presets
+                   above. Signed on-board by the existing Send_Command_Ex
+                   (real SipHash-2-4 key + counter) -- this is only a
+                   parser in front of already-trusted code, not new
+                   protocol/crypto logic. */
+                char *p = command + 4;
+                char *end;
+                unsigned long opcode = strtoul(p, &end, 16);
+                bool bad = (end == p);
+                p = end;
+                unsigned long subsystem = strtoul(p, &end, 16);
+                bad = bad || (end == p);
+                p = end;
+                unsigned long data_id = strtoul(p, &end, 16);
+                bad = bad || (end == p);
+                p = end;
+                unsigned long address = strtoul(p, &end, 16);
+                bad = bad || (end == p);
+                p = end;
+                unsigned long num_packets = strtoul(p, &end, 10);
+                bad = bad || (end == p);
+
+                if (bad || opcode > 0xFF || subsystem > 0xFF || data_id > 0xFF ||
+                    address > 0xFFFFFFFFUL || num_packets > 0xFFFF)
+                {
+                    uart2_puts("ERR usage: CMD <opcode_hex> <subsys_hex> <data_id_hex> "
+                               "<addr_hex> <num_packets_dec>, e.g. CMD 12 01 01 0 0\r\n");
+                }
+                else
+                {
+                    Send_Command_Ex((uint8_t)opcode, (uint8_t)subsystem, (uint8_t)data_id,
+                                     (uint32_t)address, (uint16_t)num_packets);
+                    Listen_For_Response(ACK_WAIT_MS);
+                }
+            }
 #endif
             else
             {

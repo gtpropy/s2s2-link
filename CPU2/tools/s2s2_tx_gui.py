@@ -113,6 +113,7 @@ import serial.tools.list_ports
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import morse
+import s2s2_decoder as dec
 from audio_player import AudioPlayer
 
 MAX_PAYLOAD_BYTES = 659  # s2s2com.h MAX_PAYLOAD_LEN -- cubus_ax25_fragment's ceiling
@@ -348,6 +349,7 @@ class MainWindow(QMainWindow):
 
         self.ser = None
         self.reader = None
+        self.analyzer_window = None
         self.last_sent_payload = None
         self.bytes_sent_total = 0
         self.messages_sent_total = 0
@@ -395,6 +397,12 @@ class MainWindow(QMainWindow):
         self.autoscroll_check.toggled.connect(self._on_autoscroll_toggled)
         conn_row.addWidget(self.autoscroll_check)
 
+        self.analyzer_btn = QPushButton("Response Analyzer")
+        self.analyzer_btn.setToolTip("Structured, decoded view of everything the board reports "
+                                      "receiving -- shares this connection, doesn't open the port twice.")
+        self.analyzer_btn.clicked.connect(self.open_response_analyzer)
+        conn_row.addWidget(self.analyzer_btn)
+
         outer.addLayout(conn_row)
 
         # --- main split: (send/log) | (radio control + CW + activity) ---
@@ -426,6 +434,46 @@ class MainWindow(QMainWindow):
             cmd_grid.addWidget(btn, i // 5, i % 5)
             self.cli_buttons.append(btn)
         left_layout.addWidget(cmd_box)
+
+        custom_box = QGroupBox("Custom Command  (DEBUG_BUILD only -- any opcode/subsystem/"
+                                "data_id/address/num_packets, signed on-board with the real key)")
+        custom_grid = QGridLayout(custom_box)
+
+        custom_grid.addWidget(QLabel("Opcode:"), 0, 0)
+        self.custom_opcode = QComboBox()
+        for code, name in sorted(dec.CMD_NAMES.items()):
+            self.custom_opcode.addItem(f"0x{code:02X} {name}", code)
+        custom_grid.addWidget(self.custom_opcode, 0, 1)
+
+        custom_grid.addWidget(QLabel("Subsystem:"), 0, 2)
+        self.custom_subsys = QComboBox()
+        self.custom_subsys.addItem("0x00 (none)", 0)
+        for code, name in sorted(dec.SUBSYS_NAMES.items()):
+            self.custom_subsys.addItem(f"0x{code:02X} {name}", code)
+        custom_grid.addWidget(self.custom_subsys, 0, 3)
+
+        custom_grid.addWidget(QLabel("Data ID:"), 1, 0)
+        self.custom_data_id = QComboBox()
+        self.custom_data_id.addItem("0x00 (none)", 0)
+        for code, name in sorted(dec.DATA_ID_NAMES.items()):
+            self.custom_data_id.addItem(f"0x{code:02X} {name}", code)
+        custom_grid.addWidget(self.custom_data_id, 1, 1)
+
+        custom_grid.addWidget(QLabel("Address (hex):"), 1, 2)
+        self.custom_address = QLineEdit("0")
+        self.custom_address.setPlaceholderText("e.g. 1000 (DOWNLOAD_FILE only, else 0)")
+        custom_grid.addWidget(self.custom_address, 1, 3)
+
+        custom_grid.addWidget(QLabel("Num packets:"), 2, 0)
+        self.custom_num_packets = QSpinBox()
+        self.custom_num_packets.setRange(0, 0xFFFF)
+        custom_grid.addWidget(self.custom_num_packets, 2, 1)
+
+        self.custom_send_btn = QPushButton("Send custom command")
+        self.custom_send_btn.clicked.connect(self.send_custom_command)
+        custom_grid.addWidget(self.custom_send_btn, 2, 2, 1, 2)
+
+        left_layout.addWidget(custom_box)
 
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Raw TX mode:"))
@@ -599,6 +647,7 @@ class MainWindow(QMainWindow):
         self.power_slider.setEnabled(connected)
         self.beacon_on_btn.setEnabled(connected)
         self.beacon_off_btn.setEnabled(connected)
+        self.custom_send_btn.setEnabled(connected)
         for btn in self.cli_buttons:
             btn.setEnabled(connected)
 
@@ -667,6 +716,8 @@ class MainWindow(QMainWindow):
 
     def _handle_incoming_line(self, line: str):
         self._append_colored_incoming_line(line)
+        if self.analyzer_window is not None:
+            self.analyzer_window.feed_line(line)
 
         m = _RE_RADIO_SEND.search(line)
         if m:
@@ -770,6 +821,46 @@ class MainWindow(QMainWindow):
             self.on_serial_error(str(e))
             return
         self.append_log("--- sent %s ---" % keyword, ACCENT)
+
+    def send_custom_command(self):
+        if self.ser is None:
+            return
+        opcode = self.custom_opcode.currentData()
+        subsystem = self.custom_subsys.currentData()
+        data_id = self.custom_data_id.currentData()
+        num_packets = self.custom_num_packets.value()
+        addr_text = self.custom_address.text().strip() or "0"
+        try:
+            address = int(addr_text, 16)
+        except ValueError:
+            QMessageBox.warning(self, "Bad address", "Address must be hex (e.g. 1000, no 0x needed).")
+            return
+        if not (0 <= address <= 0xFFFFFFFF):
+            QMessageBox.warning(self, "Bad address", "Address must fit in 32 bits.")
+            return
+
+        keyword = f"CMD {opcode:X} {subsystem:X} {data_id:X} {address:X} {num_packets}"
+        line = (keyword + "\r\n").encode("ascii")
+        try:
+            self.ser.write(line)
+        except serial.SerialException as e:
+            self.on_serial_error(str(e))
+            return
+        self.append_log("--- sent %s ---" % keyword, ACCENT)
+
+    def open_response_analyzer(self):
+        if self.analyzer_window is None:
+            from response_analyzer import ResponseAnalyzerWindow
+            self.analyzer_window = ResponseAnalyzerWindow(standalone=False)
+            self.analyzer_window.setAttribute(
+                Qt.WidgetAttribute.WA_DeleteOnClose if PYQT_VERSION == 6 else Qt.WA_DeleteOnClose)
+            self.analyzer_window.destroyed.connect(self._on_analyzer_closed)
+        self.analyzer_window.show()
+        self.analyzer_window.raise_()
+        self.analyzer_window.activateWindow()
+
+    def _on_analyzer_closed(self):
+        self.analyzer_window = None
 
     # ---------------------------------------------------------------
     def _play_cw_message(self, message: str):

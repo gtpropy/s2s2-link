@@ -286,7 +286,7 @@ class RxWorker(QThread):
             if not self._mark_seen(frame):
                 continue
             combo = f"order={c['order']} invert={c['invert']} phase={c['phase']}"
-            status, info = self.reassembler.accept_frame(frame)
+            status, info = self.reassembler.accept_frame(frame, c.get("confidence"))
 
             if status == "rejected":
                 chunk_rejected += 1

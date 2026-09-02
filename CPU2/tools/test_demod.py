@@ -108,11 +108,60 @@ def run_case(label, snr_db, sample_rate):
           f"rs_corrected={rs_corrected}, payload={pkt['payload']!r}")
 
 
+def run_erasure_wiring_case():
+    """Proves the confidence -> erasure wiring end-to-end (gmsk_demod's
+    `confidence` field -> s2s2_decoder.erasure_positions_from_confidence
+    -> rs_decode_with_erasures -> Reassembler.accept_frame) using the
+    real frame layout constants and the real decode/reassembly code
+    path. The RS math itself (does erasure-marking actually recover
+    more errors) is already proven exhaustively in test_decoder.py;
+    this test is specifically about the plumbing between gmsk_demod's
+    per-byte confidence output and s2s2_decoder's consumption of it --
+    frame168-index-to-codeword-position mapping, threshold/cap
+    selection, and Reassembler.accept_frame's confidence pass-through --
+    so it corrupts a known, controlled set of bytes in the real
+    firmware-encoded reference frame rather than depending on how
+    discriminating this demod chain's raw confidence metric happens to
+    be for a given SNR (a separate DSP-tuning question)."""
+    frame = build_reference_frame()
+
+    rng = np.random.RandomState(7)
+    bad_frame = bytearray(frame)
+    confidence = [1.0] * dec.FX25_FRAME_LEN
+    corrupt_idx = rng.choice(range(dec.FX25_TAG_LEN, dec.FX25_FRAME_LEN), size=20, replace=False)
+    for idx in corrupt_idx:
+        orig = bad_frame[idx]
+        new = orig
+        while new == orig:
+            new = int(rng.randint(0, 256))
+        bad_frame[idx] = new
+        confidence[idx] = 0.0
+    bad_frame = bytes(bad_frame)
+
+    plain_result = dec.fx25_decode_frame(bad_frame)
+    assert plain_result is None, "erasure-wiring case: plain decode should have failed past RS_T=16"
+
+    era_result = dec.fx25_decode_frame(bad_frame, confidence)
+    assert era_result is not None, "erasure-wiring case: confidence-guided decode should have recovered it"
+    ax25_frame, corrected = era_result
+    parsed = dec.ax25_parse_ui_frame(ax25_frame)
+    assert parsed is not None, "erasure-wiring case: AX.25 parse/FCS failed on recovered frame"
+
+    r = dec.Reassembler()
+    status, pkt = r.accept_frame(bad_frame, confidence)
+    assert status == "complete", f"erasure-wiring case: reassembly status={status} ({pkt})"
+    assert pkt["payload"] == b"S2S2 GMSK selftest", f"erasure-wiring case: payload mismatch: {pkt['payload']!r}"
+    print(f"[erasure-wiring] plain rs_decode correctly failed on the corrupted frame; "
+          f"confidence-guided rs_decode_with_erasures recovered it (corrected={corrected} bytes), "
+          f"payload={pkt['payload']!r}")
+
+
 def main():
     np.random.seed(0)
     run_case("clean, 240ksps", snr_db=None, sample_rate=240000)
     run_case("20dB SNR, 240ksps", snr_db=20, sample_rate=240000)
     run_case("12dB SNR, 250ksps (non-integer sps)", snr_db=12, sample_rate=250000)
+    run_erasure_wiring_case()
     print("\nALL DEMOD SELF-TESTS PASSED")
 
 

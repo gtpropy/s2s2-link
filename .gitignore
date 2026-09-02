@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+CPU2/tools/.session_secret
+CPU2/tools/mission_control.db

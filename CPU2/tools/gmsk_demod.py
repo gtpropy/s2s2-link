@@ -185,7 +185,7 @@ def find_sync_positions(bits: np.ndarray, order: str, max_errors: int = 2):
 
 def extract_candidate_frames(iq: np.ndarray, sample_rate: float, baud: float = BAUD,
                               sps: int = SPS, max_sync_errors: int = 2,
-                              phases=None, orders=None, inverts=None):
+                              phases=None, orders=None, inverts=None, denoise_fn=None):
     """Runs the full demod chain and returns every raw FX25_FRAME_LEN
     (168)-byte candidate frame found, across the requested (sample-phase,
     polarity, bit-order) combinations -- most will be garbage; the caller
@@ -204,6 +204,20 @@ def extract_candidate_frames(iq: np.ndarray, sample_rate: float, baud: float = B
     a handful of candidates instead of 100 -- much cheaper, and it stops
     flooding a log with rejections from combinations that were never
     going to be right in the first place.
+
+    Each result also carries `confidence`: a 168-entry list, one per
+    frame byte, of how far that byte's least-certain bit's symbol sample
+    sat from the slicer's zero threshold (min |decim| over its 8 bits --
+    a byte is only as trustworthy as its worst bit). Not calibrated to
+    any physical unit, just a relative reliability score for feeding
+    s2s2_decoder.erasure_positions_from_confidence() / rs_decode_with_
+    erasures() ahead of the usual rs_decode() -- see fx25_decode_frame.
+
+    `denoise_fn`, if given, is applied to the discriminator output right
+    after the existing lowpass filter, before symbol-rate resampling --
+    e.g. `lambda x: ml_denoise.denoise(model, x)` (see ml_denoise.py).
+    Not imported here: this module stays numpy+scipy only, ml_denoise is
+    an optional add-on the caller wires in.
     """
     phases = range(sps) if phases is None else phases
     orders = ("msb", "lsb") if orders is None else orders
@@ -212,12 +226,15 @@ def extract_candidate_frames(iq: np.ndarray, sample_rate: float, baud: float = B
     freq = fm_demod(iq, sample_rate)
     freq = dc_block(freq)
     freq = lowpass_filter(freq, sample_rate, cutoff_hz=baud * 0.9)
+    if denoise_fn is not None:
+        freq = denoise_fn(freq)
     sym = resample_to_sps(freq, sample_rate, baud, sps)
 
     frame_bits = FX25_FRAME_LEN * 8
     results = []
     for phase in phases:
         decim = sym[phase::sps]
+        mag = np.abs(decim)
         for invert in inverts:
             bits = (decim < 0).astype(np.uint8) if invert else (decim > 0).astype(np.uint8)
             for order in orders:
@@ -227,9 +244,11 @@ def extract_candidate_frames(iq: np.ndarray, sample_rate: float, baud: float = B
                     if fend > len(bits):
                         continue
                     frame = pack_bits(bits[fstart:fend], order)
+                    confidence = mag[fstart:fend].reshape(-1, 8).min(axis=1).tolist()
                     results.append({
                         "phase": phase, "invert": invert, "order": order,
                         "bit_pos": int(start), "frame": frame,
+                        "confidence": confidence,
                     })
     return results
 

@@ -94,6 +94,14 @@ static tx_history_t s_tx_history;
 static bool s_beacon_enabled = true;
 #endif
 
+/* Bench/flight-mode switch: when true, every DEBUG_BUILD UART backdoor
+   (TX/POWER/BEACON/TEST*) is refused (falls through to UNKNOWN COMMAND)
+   regardless of build type, so the unit behaves like a real production
+   satellite -- all further interaction has to go over real RF via the
+   ground station. Togglable back off from the local bench UART cable
+   (physical access = trusted), unlike a real flight unit. */
+static bool s_satellite_mode = false;
+
 /* Digipeater mission (CMD_DIGIPEATER/CMD_ABORT_MISSION), production
    feature (not DEBUG_BUILD-gated) -- see DPM_ARCHITECTURE.md. */
 static bool s_digipeater_enabled = false;
@@ -546,6 +554,7 @@ static void Cycle_Tick(void) {
             }
 #endif
             s_cycle_phase = CYCLE_PHASE_BEACON1;
+            uart2_puts("CYCLE PHASE: BEACON1\r\n");
             break;
 
         case CYCLE_PHASE_BEACON1:
@@ -558,6 +567,7 @@ static void Cycle_Tick(void) {
 #endif
             s_mission_start_ms = Get_Time_Ms();
             s_cycle_phase = CYCLE_PHASE_MISSION;
+            uart2_puts("CYCLE PHASE: MISSION\r\n");
             break;
 
         case CYCLE_PHASE_MISSION:
@@ -565,6 +575,7 @@ static void Cycle_Tick(void) {
                 return;
             }
             s_cycle_phase = CYCLE_PHASE_BEACON2;
+            uart2_puts("CYCLE PHASE: BEACON2\r\n");
             break;
 
         case CYCLE_PHASE_BEACON2:
@@ -576,6 +587,7 @@ static void Cycle_Tick(void) {
             }
 #endif
             s_cycle_phase = CYCLE_PHASE_CW;
+            uart2_puts("CYCLE PHASE: CW\r\n");
             break;
     }
 }
@@ -660,8 +672,22 @@ static void Process_UART_Command(void) {
     static char command[CMD_LINE_MAX];
     if (!USART_TryReadLine(command, sizeof(command))) return;
 
+    /* Always available, any build: locks/unlocks every debug backdoor
+       below regardless of build type, so a DEBUG_BUILD unit on the
+       bench can be made to behave like real flight hardware. Reversible
+       from this same local UART cable (physical access = trusted). */
+    if (str_ieq(command, "SATMODE ON")) {
+        s_satellite_mode = true;
+        uart2_puts("SATELLITE MODE ON - debug/test commands disabled\r\n");
+        return;
+    } else if (str_ieq(command, "SATMODE OFF")) {
+        s_satellite_mode = false;
+        uart2_puts("SATELLITE MODE OFF\r\n");
+        return;
+    }
+
 #ifdef DEBUG_BUILD
-    if (str_starts_ieq(command, "TX ")) {
+    if (!s_satellite_mode && str_starts_ieq(command, "TX ")) {
         uint8_t payload[MAX_PAYLOAD_LEN];
         int n = hex_decode(command + 3, payload, sizeof(payload));
         if (n < 0) {
@@ -674,15 +700,36 @@ static void Process_UART_Command(void) {
                                 payload, (uint16_t)n);
         uart2_printf("%s (%d byte%s)\r\n", ok ? "OK sent" : "ERR send failed",
                      n, n == 1 ? "" : "s");
-    } else if (str_starts_ieq(command, "POWER ")) {
+    } else if (!s_satellite_mode && str_starts_ieq(command, "POWER ")) {
         int dbm = atoi(command + 6);
         RadioApp_SetTxPower((int8_t)dbm);
-    } else if (str_ieq(command, "BEACON ON")) {
+    } else if (!s_satellite_mode && str_ieq(command, "BEACON ON")) {
         s_beacon_enabled = true;
         uart2_puts("BEACON ON\r\n");
-    } else if (str_ieq(command, "BEACON OFF")) {
+    } else if (!s_satellite_mode && str_ieq(command, "BEACON OFF")) {
         s_beacon_enabled = false;
         uart2_puts("BEACON OFF\r\n");
+    } else if (!s_satellite_mode && str_ieq(command, "TESTCW")) {
+        uart2_puts("TESTCW: forcing an immediate CW beacon send\r\n");
+        Send_Cw_Beacon();
+    } else if (!s_satellite_mode && str_ieq(command, "TESTBEACON1")) {
+        uart2_puts("TESTBEACON1: forcing an immediate Beacon1 send\r\n");
+        Send_Beacon1();
+    } else if (!s_satellite_mode && str_ieq(command, "TESTBEACON2")) {
+        uart2_puts("TESTBEACON2: forcing an immediate Beacon2 send\r\n");
+        Send_Beacon2();
+    } else if (!s_satellite_mode && str_starts_ieq(command, "TESTDIGI ")) {
+        uint8_t frame[FX25_FRAME_LEN];
+        int n = hex_decode(command + 9, frame, sizeof(frame));
+        if (n != FX25_FRAME_LEN) {
+            uart2_printf("ERR TESTDIGI needs exactly %d hex-encoded bytes (%d given)\r\n",
+                         FX25_FRAME_LEN, n < 0 ? -1 : n);
+            return;
+        }
+        uart2_printf("TESTDIGI: feeding a %d-byte frame into Try_Digipeat() "
+                     "(digipeater currently %s for real traffic)\r\n",
+                     FX25_FRAME_LEN, s_digipeater_enabled ? "enabled" : "disabled");
+        Try_Digipeat(frame, (uint16_t)n);
     } else
 #endif
     if (command[0] != 0) {

@@ -186,28 +186,43 @@ for _i in range(RS_PARITY):
     _GEN = _gf_poly_mul(_GEN, [1, gf_pow(2, _i + 1)])
 
 
-def rs_decode(codeword: bytearray) -> int:
-    """In-place RS(255,223) decode. Returns symbols corrected (0..16), or
-    -1 if uncorrectable. Direct port of rs_decode() in rs.c."""
-    synd = [0] * RS_PARITY
-    has_error = False
-    for i in range(RS_PARITY):
-        synd[i] = _gf_poly_eval_hl(codeword, gf_pow(2, i + 1))
-        if synd[i]:
-            has_error = True
-    if not has_error:
-        return 0
+def rs_encode(msg: bytes) -> bytes:
+    """Systematic RS(255,223) encode. Direct port of rs_encode() in rs.c.
+    SELF-TEST / UTILITY USE ONLY -- the ground station never transmits;
+    this exists so the decode paths below (rs_decode, rs_decode_with_erasures)
+    can be verified against real codewords without needing a live radio
+    link or firmware-generated capture."""
+    assert len(msg) == RS_K
+    data = bytearray(RS_N)
+    data[:RS_K] = msg
+    for i in range(RS_K):
+        coef = data[i]
+        if coef:
+            for j in range(1, RS_PARITY + 1):
+                if _GEN[j]:
+                    data[i + j] ^= gf_mul(_GEN[j], coef)
+    codeword = bytearray(RS_N)
+    codeword[:RS_K] = msg
+    codeword[RS_K:] = data[RS_K:]
+    return bytes(codeword)
 
+
+def _berlekamp_massey(synd_seq):
+    """Massey's LFSR synthesis over the given syndrome sequence. Returns
+    the (high-to-low, leading-zero-trimmed) locator polynomial. Shared by
+    rs_decode (fed the full 32 syndromes) and rs_decode_with_erasures
+    (fed a shorter, erasure-adjusted sequence -- see there) -- same
+    algorithm either way, only the syndrome source and length differ."""
     err_loc = [1]
     old_loc = [1]
     le, lo = 1, 1
 
-    for i in range(RS_PARITY):
-        delta = synd[i]
+    for i in range(len(synd_seq)):
+        delta = synd_seq[i]
         for j in range(1, le):
             idx = i - j
             if idx >= 0:
-                delta ^= gf_mul(err_loc[le - 1 - j], synd[idx])
+                delta ^= gf_mul(err_loc[le - 1 - j], synd_seq[idx])
 
         old_loc.append(0)
         lo += 1
@@ -230,20 +245,29 @@ def rs_decode(codeword: bytearray) -> int:
     while start < le - 1 and err_loc[start] == 0:
         start += 1
     err_loc = err_loc[start:]
-    L = len(err_loc)
-    errs = L - 1
-    if errs < 1 or errs > RS_T:
+    return err_loc, len(err_loc) - 1
+
+
+def _chien_forney(codeword: bytearray, synd, err_loc, errs: int) -> int:
+    """Chien search (root-find err_loc over all RS_N field elements) +
+    Forney error-value formula, applied in place to `codeword`. `err_loc`
+    is high-to-low (as _berlekamp_massey returns, or Gamma*sigma combined
+    for the erasures case), `errs` = deg(err_loc). Returns errs corrected,
+    or -1 if the locator doesn't factor cleanly (uncorrectable / erasure
+    positions were wrong)."""
+    if errs < 0 or errs > RS_PARITY:
         return -1
 
     err_pos = []
     for i in range(RS_N):
         if _gf_poly_eval_hl(err_loc, gf_pow(2, i)) == 0:
-            if len(err_pos) >= RS_T:
+            if len(err_pos) > errs:
                 return -1
             err_pos.append((RS_N - 1) if i == 0 else i - 1)
     if len(err_pos) != errs:
         return -1
 
+    L = errs + 1
     Lam = [err_loc[L - 1 - k] for k in range(errs + 1)]
 
     Somega = [0] * RS_PARITY
@@ -273,6 +297,93 @@ def rs_decode(codeword: bytearray) -> int:
             return -1
 
     return errs
+
+
+def rs_decode(codeword: bytearray) -> int:
+    """In-place RS(255,223) decode. Returns symbols corrected (0..16), or
+    -1 if uncorrectable. Direct port of rs_decode() in rs.c."""
+    synd = [0] * RS_PARITY
+    has_error = False
+    for i in range(RS_PARITY):
+        synd[i] = _gf_poly_eval_hl(codeword, gf_pow(2, i + 1))
+        if synd[i]:
+            has_error = True
+    if not has_error:
+        return 0
+
+    err_loc, errs = _berlekamp_massey(synd)
+    if errs < 1 or errs > RS_T:
+        return -1
+    return _chien_forney(codeword, synd, err_loc, errs)
+
+
+def rs_decode_with_erasures(codeword: bytearray, erasure_positions) -> int:
+    """Errors-and-erasures RS(255,223) decode: like rs_decode(), but the
+    caller supplies byte positions (0..254 into `codeword`) it already
+    knows are unreliable (e.g. low receiver-confidence bytes from the
+    demod, see gmsk_demod.confidence_erasure_positions()). Every marked
+    position gets its value recovered rather than merely checked, which
+    trades decode capacity: each erasure costs half what an unknown error
+    costs (2*errors + erasures <= 32, vs. errors <= 16 alone), so this
+    can correct up to 32 known-bad bytes, or fewer erasures plus some
+    number of genuinely unknown errors on top.
+
+    Ground-truth relationship this implements (standard errors-and-
+    erasures RS decoding, e.g. Wicker & Bhargava ch.5): with erasure
+    locator Gamma(x) = prod (1 - X_j x) over the e known-bad positions
+    and S(x) the syndrome polynomial, the v additional (unknown-position)
+    errors satisfy the same key equation as the error-only case but
+    against U(x) = Gamma(x)*S(x) mod x^32 with its lowest e coefficients
+    dropped -- i.e. _berlekamp_massey() on a shorter syndrome sequence.
+    The combined locator Lambda = Gamma*sigma and the ORIGINAL syndromes
+    then go through the exact same Chien+Forney step rs_decode() uses,
+    since that step doesn't care how the locator was derived.
+
+    Behaves identically to rs_decode() when erasure_positions is empty
+    (Gamma(x) = 1) -- verified in test_decoder.py.
+
+    Returns total positions corrected (errors + erasures), or -1 if
+    uncorrectable / an erasure position was actually fine (this can
+    legitimately happen if the confidence heuristic was wrong -- it's
+    just a hint, not a guarantee)."""
+    erasure_positions = sorted(set(erasure_positions))
+    e = len(erasure_positions)
+    if e == 0:
+        return rs_decode(codeword)
+    if e > RS_PARITY or any(not (0 <= p < RS_N) for p in erasure_positions):
+        return -1
+
+    synd = [0] * RS_PARITY
+    has_error = False
+    for i in range(RS_PARITY):
+        synd[i] = _gf_poly_eval_hl(codeword, gf_pow(2, i + 1))
+        if synd[i]:
+            has_error = True
+    if not has_error:
+        return 0
+
+    # Gamma(x), low-to-high (index = power of x, Gamma[0] = 1 = constant
+    # term) so it can be convolved directly against the syndrome
+    # polynomial S(x) (synd[] is already low-to-high: synd[i] = S_{i+1}).
+    gamma_lh = [1]
+    for p in erasure_positions:
+        location = gf_pow(2, RS_N - 1 - p)  # X_j = alpha^(x-power at position p)
+        gamma_lh = _gf_poly_mul(gamma_lh, [1, location])
+
+    if e > RS_PARITY:
+        return -1
+    u = _gf_poly_mul(gamma_lh, synd)[:RS_PARITY]  # Gamma(x)*S(x) mod x^32
+    modsynd = u[e:]  # drop the e low-order coefficients (Forney-syndrome shift)
+
+    sigma_hl, extra_errs = _berlekamp_massey(modsynd)
+    if 2 * extra_errs + e > RS_PARITY:
+        return -1
+
+    gamma_hl = gamma_lh[::-1]  # same polynomial, high-to-low (poly[0] = leading term)
+    combined = _gf_poly_mul(gamma_hl, sigma_hl)
+    total_errs = e + extra_errs
+
+    return _chien_forney(codeword, synd, combined, total_errs)
 
 
 # =====================================================================
@@ -329,19 +440,69 @@ def fx25_unpack_data_field(data: bytes):
     return None
 
 
-def fx25_decode_frame(frame168: bytes):
-    """Returns (ax25_frame: bytes, rs_bytes_corrected: int) or None."""
+def _build_rs_codeword(frame168: bytes) -> bytearray:
+    codeword = bytearray(FX25_ZERO_PAD)
+    codeword += frame168[FX25_TAG_LEN:FX25_TAG_LEN + FX25_DATA_LEN]
+    codeword += frame168[FX25_TAG_LEN + FX25_DATA_LEN:FX25_TAG_LEN + FX25_DATA_LEN + FX25_CHECK_LEN]
+    assert len(codeword) == RS_N
+    return codeword
+
+
+def erasure_positions_from_confidence(confidence, max_erasures: int = 24):
+    """Maps a per-frame168-byte receiver-confidence array (see
+    gmsk_demod.extract_candidate_frames' `confidence` field -- higher =
+    more reliable, e.g. discriminator-sample magnitude at the bit-slice
+    instant) to RS codeword positions for rs_decode_with_erasures().
+
+    Only frame168 bytes [FX25_TAG_LEN:FX25_FRAME_LEN) are RS codeword
+    bytes (the first 8 are the hard-matched FX.25 tag, already verified
+    exactly, not part of the RS block); the FX25_ZERO_PAD region is
+    virtual (never transmitted, always 0) and never marked. Picks the
+    `max_erasures` least-confident bytes -- capped well under RS_PARITY
+    so there's headroom left for genuinely unknown errors on top (see
+    fx25_decode_frame's fallback for what happens if this cap, or the
+    confidence estimate itself, was wrong)."""
+    if confidence is None or len(confidence) < FX25_FRAME_LEN:
+        return []
+    scored = sorted(
+        range(FX25_TAG_LEN, FX25_FRAME_LEN),
+        key=lambda idx: confidence[idx],
+    )
+    picked = scored[:max_erasures]
+    return sorted((idx - FX25_TAG_LEN) + FX25_ZERO_PAD for idx in picked)
+
+
+def fx25_decode_frame(frame168: bytes, confidence=None, max_erasures: int = 24):
+    """Returns (ax25_frame: bytes, rs_bytes_corrected: int) or None.
+
+    `confidence`, if given, is the per-byte receiver-confidence array
+    from gmsk_demod.extract_candidate_frames (see there) -- the least
+    confident bytes get marked as RS erasures (erasure_positions_from_
+    confidence) and decoded via rs_decode_with_erasures for a shot at
+    correcting more than RS_T=16 bad bytes. If that fails (the
+    confidence heuristic guessed wrong, or there simply weren't that
+    many actual errors), falls back to plain rs_decode on a fresh
+    codeword copy -- erasure hints can only help or be a no-op, they
+    can never make a frame that plain decode would've recovered fail,
+    since rs_decode_with_erasures(codeword, []) is byte-identical to
+    rs_decode(codeword) and this always tries both."""
     if len(frame168) != FX25_FRAME_LEN:
         return None
     if not fx25_tag_matches(frame168[:FX25_TAG_LEN]):
         return None
 
-    codeword = bytearray(FX25_ZERO_PAD)
-    codeword += frame168[FX25_TAG_LEN:FX25_TAG_LEN + FX25_DATA_LEN]
-    codeword += frame168[FX25_TAG_LEN + FX25_DATA_LEN:FX25_TAG_LEN + FX25_DATA_LEN + FX25_CHECK_LEN]
-    assert len(codeword) == RS_N
+    erasures = erasure_positions_from_confidence(confidence, max_erasures) if confidence else []
 
-    corrected = rs_decode(codeword)
+    if erasures:
+        codeword = _build_rs_codeword(frame168)
+        corrected = rs_decode_with_erasures(codeword, erasures)
+        if corrected < 0:
+            codeword = _build_rs_codeword(frame168)  # erasure attempt may have partially mutated it
+            corrected = rs_decode(codeword)
+    else:
+        codeword = _build_rs_codeword(frame168)
+        corrected = rs_decode(codeword)
+
     if corrected < 0:
         return None
 
@@ -433,10 +594,13 @@ class Reassembler:
         self.payload = bytearray(MAX_PAYLOAD_LEN)
         self.rs_bytes_corrected = 0
 
-    def accept_frame(self, frame168: bytes):
+    def accept_frame(self, frame168: bytes, confidence=None):
         """Returns ('complete', pkt_dict) | ('partial', info_dict) |
-        ('rejected', reason_str)."""
-        result = fx25_decode_frame(frame168)
+        ('rejected', reason_str). `confidence`: optional per-byte
+        receiver-confidence array (see gmsk_demod.extract_candidate_
+        frames' `confidence` field) -- passed straight through to
+        fx25_decode_frame for erasure-assisted RS decode."""
+        result = fx25_decode_frame(frame168, confidence)
         if result is None:
             return ("rejected", "fx25/rs decode failed")
         ax25_frame, rs_corrected = result
