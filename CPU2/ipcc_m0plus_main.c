@@ -26,6 +26,7 @@
 #include "ax25_digi.h"
 #include "tx_history.h"
 #include "cw_beacon.h"
+#include "mem_stats.h"
 
 const RadioConfig_t SatelliteProfile = {
     .txFrequency = DEFAULT_TX_FREQUENCY_HZ,
@@ -43,18 +44,23 @@ static const cubus_ax25_link_t s_link = {
 #define BEACON_INTERVAL_MS  5000
 #define TX_TIMEOUT_MS       1000
 
-/* Real CW Morse beacon and structured FX.25 housekeeping beacons --
-   real amateur-CubeSat practice (see CPU2/README_GMSK_S2S2_ARCHITECTURE.md),
-   all gated by the same s_beacon_enabled bench-test toggle as the 5s text
-   ping above (DEBUG_BUILD only; always on in production, same as it).
+/* Real CW Morse beacon -- real amateur-CubeSat practice (see
+   CPU2/README_GMSK_S2S2_ARCHITECTURE.md), gated by the same
+   s_beacon_enabled bench-test toggle as the 5s text ping above
+   (DEBUG_BUILD only; always on in production, same as it).
 
-   Sequenced as one strict cycle, not three independent interval timers:
-   [CW] -> [Beacon1] -> [Mission 90s] -> [Beacon2] -> back to [CW]. CW/
-   Beacon1/Beacon2 slot lengths are just however long their actual radio
-   TX takes (Morse duration, FX.25 airtime, RX resume) -- only Mission
-   gets a fixed, dedicated timer, started fresh the moment its phase
-   begins, uninterrupted by any beacon. So the CW-to-CW gap is ~90s plus
-   whatever the three TX phases actually took, not a fixed number. */
+   Sequenced as one strict cycle, not independent interval timers:
+   [CW1] -> [Mission 90s] -> [CW2] -> [Mission 90s] -> back to [CW1].
+   CW1/CW2 slot lengths are just however long the actual Morse TX takes
+   (RX resume included) -- each Mission slot gets its own fixed,
+   dedicated timer, started fresh the moment that phase begins,
+   uninterrupted by either CW beacon. So each CW-to-CW gap is ~90s plus
+   whatever that CW TX actually took, not a fixed number. The structured
+   FX.25 housekeeping frames (beacon1_t/beacon2_t, Send_Beacon1/
+   Send_Beacon2) are no longer wired into this automatic cycle -- still
+   reachable by hand via the TESTBEACON1/TESTBEACON2 bench UART commands
+   below. CW1/CW2 message content is identical for now (format not
+   final yet) -- both call Send_Cw_Beacon(). */
 #define CYCLE_MISSION_MS   90000
 
 #define CMD_LINE_MAX 1400 /* "TX " + up to MAX_PAYLOAD_LEN (659) bytes hex-encoded (1318 chars) + margin */
@@ -81,13 +87,13 @@ static uint32_t last_burst_finish_time = 0;
 /* CW/Beacon1/Mission/Beacon2 cycle sequencer state -- see CYCLE_MISSION_MS
    comment above. */
 typedef enum {
-    CYCLE_PHASE_CW = 0,
-    CYCLE_PHASE_BEACON1,
-    CYCLE_PHASE_MISSION,
-    CYCLE_PHASE_BEACON2,
+    CYCLE_PHASE_CW1 = 0,
+    CYCLE_PHASE_MISSION1,
+    CYCLE_PHASE_CW2,
+    CYCLE_PHASE_MISSION2,
 } CyclePhase_t;
 
-static CyclePhase_t s_cycle_phase = CYCLE_PHASE_CW;
+static CyclePhase_t s_cycle_phase = CYCLE_PHASE_CW1;
 static uint32_t s_mission_start_ms = 0;
 static tx_history_t s_tx_history;
 #ifdef DEBUG_BUILD
@@ -465,6 +471,25 @@ static void Get_Cw_Telemetry_Digits(char out[6]) {
    Independent of the S2S2 AX.25/FX.25 link entirely -- keys the raw RF
    carrier directly (RadioApp_KeyCw/cw_beacon.h), not a packet of any
    kind, so it needs no seq_num/ACK/tx_history bookkeeping. */
+/* Real, listenable-by-ear Morse CW beacon: "DE <CALLSIGN> <5 digits>".
+   Independent of the S2S2 AX.25/FX.25 link entirely -- keys the raw RF
+   carrier directly (RadioApp_KeyCw/cw_beacon.h), not a packet of any
+   kind, so it needs no seq_num/ACK/tx_history bookkeeping.
+
+   NOTE 2026-09-28: a non-blocking (CwBeacon_Start/Tick/IsBusy) version
+   of this was tried and reverted the same day -- it introduced a real,
+   reproducible firmware hang after some period of operation (confirmed
+   via SWD: PC frozen at the same address across repeated halts,
+   recovered only after a hardware reset) that couldn't be root-caused
+   under the time available. Blocking is simpler and was already
+   solid; the ~15s command-blind-spot this reintroduces is real but
+   fully mitigated by two independent fixes made earlier the same day:
+   uart_debug.c's interrupt-driven RX ring buffer (so bytes that DO
+   arrive during the block aren't lost, they just wait) and
+   USART_TryReadLine's partial-line idle timeout (so a line that
+   couldn't complete during the block doesn't corrupt the next one
+   sent after it). A command sent mid-CW still needs a retry; nothing
+   is silently lost or corrupted anymore. */
 static void Send_Cw_Beacon(void) {
     char digits[6];
     Get_Cw_Telemetry_Digits(digits);
@@ -532,20 +557,19 @@ static void Send_Beacon2(void) {
     RadioApp_StartRx();
 }
 
-/* Drives the [CW]...[Beacon1][Mission 90s][Beacon2]...[CW] cycle, one
-   phase-step per call. CW/Beacon1/Beacon2 each fire once then advance
-   immediately (real TX duration is whatever it is); Mission blocks phase
-   advance until its own dedicated CYCLE_MISSION_MS timer -- started the
-   instant Mission begins, not from CW -- has run out uninterrupted.
-   Ordinary command RX/processing (STATE_PROCESS_COMMAND) is untouched by
-   this and keeps working normally through every phase, Mission included. */
+/* Drives the [CW1][Mission 90s][CW2][Mission 90s] cycle, one phase-step
+   per call. CW1/CW2 each fire once then advance immediately (real TX
+   duration is whatever the Morse takes); each Mission phase blocks
+   phase advance until its own dedicated CYCLE_MISSION_MS timer --
+   started the instant that Mission phase begins, not from its CW --
+   has run out uninterrupted. */
 static void Cycle_Tick(void) {
     if (app_state != STATE_IDLE_RX) {
         return;
     }
 
     switch (s_cycle_phase) {
-        case CYCLE_PHASE_CW:
+        case CYCLE_PHASE_CW1:
 #ifdef DEBUG_BUILD
             if (s_beacon_enabled) {
 #endif
@@ -553,41 +577,38 @@ static void Cycle_Tick(void) {
 #ifdef DEBUG_BUILD
             }
 #endif
-            s_cycle_phase = CYCLE_PHASE_BEACON1;
-            uart2_puts("CYCLE PHASE: BEACON1\r\n");
+            s_mission_start_ms = Get_Time_Ms();
+            s_cycle_phase = CYCLE_PHASE_MISSION1;
+            uart2_puts("CYCLE PHASE: MISSION1\r\n");
             break;
 
-        case CYCLE_PHASE_BEACON1:
+        case CYCLE_PHASE_MISSION1:
+            if ((Get_Time_Ms() - s_mission_start_ms) < CYCLE_MISSION_MS) {
+                return;
+            }
+            s_cycle_phase = CYCLE_PHASE_CW2;
+            uart2_puts("CYCLE PHASE: CW2\r\n");
+            break;
+
+        case CYCLE_PHASE_CW2:
 #ifdef DEBUG_BUILD
             if (s_beacon_enabled) {
 #endif
-                Send_Beacon1();
+                Send_Cw_Beacon();
 #ifdef DEBUG_BUILD
             }
 #endif
             s_mission_start_ms = Get_Time_Ms();
-            s_cycle_phase = CYCLE_PHASE_MISSION;
-            uart2_puts("CYCLE PHASE: MISSION\r\n");
+            s_cycle_phase = CYCLE_PHASE_MISSION2;
+            uart2_puts("CYCLE PHASE: MISSION2\r\n");
             break;
 
-        case CYCLE_PHASE_MISSION:
+        case CYCLE_PHASE_MISSION2:
             if ((Get_Time_Ms() - s_mission_start_ms) < CYCLE_MISSION_MS) {
                 return;
             }
-            s_cycle_phase = CYCLE_PHASE_BEACON2;
-            uart2_puts("CYCLE PHASE: BEACON2\r\n");
-            break;
-
-        case CYCLE_PHASE_BEACON2:
-#ifdef DEBUG_BUILD
-            if (s_beacon_enabled) {
-#endif
-                Send_Beacon2();
-#ifdef DEBUG_BUILD
-            }
-#endif
-            s_cycle_phase = CYCLE_PHASE_CW;
-            uart2_puts("CYCLE PHASE: CW\r\n");
+            s_cycle_phase = CYCLE_PHASE_CW1;
+            uart2_puts("CYCLE PHASE: CW1\r\n");
             break;
     }
 }
@@ -636,13 +657,36 @@ static int hex_decode(const char *hex, uint8_t *out, int max_out) {
 }
 #endif /* DEBUG_BUILD */
 
+/* A command sent while a long blocking operation has the main loop tied
+   up (worst case: a ~15s CW beacon TX -- cw_beacon_send() has no async
+   variant) can still exceed the RX ring buffer (128 bytes -- ~11ms
+   worth of bytes at 115200 baud, deliberately not sized for a 15s
+   stall: that would need ~173KB, not a sane tradeoff for a bench debug
+   UART) and get truncated mid-line, same as before the interrupt-driven
+   RX fix, just far less often now (only during that ~15s window instead
+   of any main-loop hiccup). This timeout exists so a truncated line
+   doesn't corrupt the NEXT command by prefixing it with the previous
+   one's leftover bytes -- it does not, by itself, make a command sent
+   mid-CW-burst succeed; the practical mitigation is a host-side retry
+   after checking CYCLE_PHASE isn't CW1/CW2 (Mission phases are ~90s vs
+   CW's ~15s, so a naive blind retry overwhelmingly lands in a working
+   window anyway). */
+#define CMD_LINE_IDLE_TIMEOUT_MS 500U
+
 static bool USART_TryReadLine(char *out, uint16_t max) {
     static char buffer[CMD_LINE_MAX];
     static uint16_t index = 0;
+    static uint32_t last_byte_ms = 0;
     uint8_t c;
+    uint32_t now = Get_Time_Ms();
+
+    if (index > 0 && (now - last_byte_ms) > CMD_LINE_IDLE_TIMEOUT_MS) {
+        index = 0;
+    }
 
     if (!uart2_try_getc(&c)) return false;
 
+    last_byte_ms = now;
     uart2_putc((char)c);
 
     if (c == '\r' || c == '\n') {
@@ -709,9 +753,38 @@ static void Process_UART_Command(void) {
     } else if (!s_satellite_mode && str_ieq(command, "BEACON OFF")) {
         s_beacon_enabled = false;
         uart2_puts("BEACON OFF\r\n");
+    } else if (str_ieq(command, "MEMSTAT")) {
+        /* Read-only, no RF/state effect -- available even in
+           s_satellite_mode (unlike the actuating commands above), same
+           reasoning as it being worth having in a real flight build:
+           stack headroom is operational telemetry, not a bench-only
+           concern. Single-line, machine-parseable
+           (CPU2/tools/s2s2_test_suite.py's SerialLink regex-matches
+           this exact format). */
+        uint32_t used = MemStats_GetStackUsedBytes();
+        uint32_t total = MemStats_GetStackTotalBytes();
+        /* Percentage math left to the host tool (trivial float division)
+           -- kept this line to two plain %lu specifiers, nothing fancier,
+           after the combined %lu.%01lu fixed-point version produced no
+           output at all against this project's minimal uart2_printf. */
+        uart2_printf("MEMSTAT stack_used=%lu stack_total=%lu\r\n",
+                     (unsigned long)used, (unsigned long)total);
     } else if (!s_satellite_mode && str_ieq(command, "TESTCW")) {
         uart2_puts("TESTCW: forcing an immediate CW beacon send\r\n");
         Send_Cw_Beacon();
+    } else if (!s_satellite_mode && str_starts_ieq(command, "TXCW ")) {
+        /* Arbitrary operator-supplied CW text, distinct from TESTCW's
+           fixed "DE <CALLSIGN> <5 digits>" telemetry format -- same
+           cw_beacon_send() backend (cw_beacon.h), no length limit beyond
+           the shared CMD_LINE_MAX UART line buffer since cw_beacon_send
+           reads straight through the command buffer, no local copy. */
+        const char *text = command + 5;
+        uart2_printf("TXCW: sending \"%s\"\r\n", text);
+        cw_beacon_send(text, CW_DEFAULT_WPM);
+        rx_done_flag = 0;
+        rx_timeout_flag = 0;
+        rx_error_flag = 0;
+        RadioApp_StartRx();
     } else if (!s_satellite_mode && str_ieq(command, "TESTBEACON1")) {
         uart2_puts("TESTBEACON1: forcing an immediate Beacon1 send\r\n");
         Send_Beacon1();
@@ -738,6 +811,11 @@ static void Process_UART_Command(void) {
 }
 
 int main(void) {
+    /* Must be the very first thing that runs -- see mem_stats.h. Every
+       instruction before this paints less of the stack as "known
+       untouched," undercounting the later MEMSTAT high-water-mark. */
+    MemStats_PaintStack();
+
     SystemInit();
     HAL_Init();
     SysTick_Init_CPU2(48000000UL);
@@ -756,6 +834,16 @@ int main(void) {
     MX_SUBGHZ_Init();
     HAL_NVIC_SetPriority(SUBGHZ_Radio_IRQn, 0, 0);
     HAL_NVIC_EnableIRQ(SUBGHZ_Radio_IRQn);
+
+    /* Real fix for lost UART command bytes -- uart_debug.c's
+       LPUART1_IRQHandler now drains RX into a ring buffer the instant a
+       byte arrives, instead of the old poll-once-per-main-loop-iteration
+       approach that silently dropped bytes arriving during a blocking
+       CW beacon TX (~15s) or any other slow stretch of the main loop.
+       Lower priority than the radio IRQ (radio timing matters more than
+       UART), still real preemption -- not polled. */
+    HAL_NVIC_SetPriority(LPUART1_IRQn, 1, 0);
+    HAL_NVIC_EnableIRQ(LPUART1_IRQn);
     __enable_irq();
 
     RadioEvents_t events = {
@@ -774,12 +862,16 @@ int main(void) {
     uart2_puts("Type TX <hex> to transmit arbitrary bytes downlink, e.g. TX 48656C6C6F\r\n");
     uart2_puts("Type POWER <dbm> to override TX power for bench testing\r\n");
     uart2_puts("Type BEACON ON / BEACON OFF to toggle all beaconing "
-               "(5s text, plus the CW/Beacon1/Mission/Beacon2 cycle)\r\n");
+               "(5s text, plus the CW1/Mission1/CW2/Mission2 cycle)\r\n");
+    uart2_puts("Type TXCW <text> to send arbitrary text as real Morse CW, "
+               "e.g. TXCW HELLO WORLD\r\n");
+    uart2_puts("Type MEMSTAT for real runtime stack high-water-mark "
+               "(available even in SATMODE ON, read-only)\r\n");
 #endif
 
     app_state = STATE_IDLE_RX;
     last_beacon_tick_ms = Get_Time_Ms();
-    s_cycle_phase = CYCLE_PHASE_CW;
+    s_cycle_phase = CYCLE_PHASE_CW1;
 
     while (1) {
         switch (app_state) {
@@ -997,6 +1089,20 @@ int main(void) {
         Send_Beacon_If_Due();
         Cycle_Tick();
         Process_UART_Command();
+
+        /* Sleep mode between iterations -- no reason to spin the M0+ at
+         * full clock while idle. Safe now that BOTH real wake sources
+         * are genuine NVIC interrupts: SUBGHZ_Radio_IRQn (radio events,
+         * unchanged) and, as of this fix, LPUART1_IRQn too -- UART RX
+         * used to be polled with no interrupt of its own, which meant
+         * WFI could sleep through most of a fast UART byte burst
+         * (~87us/byte at 115200 baud vs up to 1ms asleep waiting for
+         * the next SysTick) before this fix existed. Now the UART ISR
+         * wakes the core the instant a byte arrives, same as radio
+         * events always have. Sleep mode only (not Stop/Standby): no
+         * clock/peripheral reinit needed, nothing here changes on wake.
+         */
+        __WFI();
     }
     return 0;
   }

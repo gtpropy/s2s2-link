@@ -29,11 +29,26 @@ void SysTick_Init_CPU2(uint32_t sys_freq_hz)
 
 void CPU2_Delay_Ms(uint32_t ms)
 {
-    while (ms--)
+    /* Sleep-wait on the real 1ms SysTick count instead of spin-counting
+     * NOPs. __WFI() halts the M0+ core (Sleep mode, not Stop/Standby --
+     * no clock/peripheral reinit needed, SysTick keeps ticking) until
+     * the next interrupt; SysTick_Handler fires every 1ms regardless,
+     * so this wakes on schedule even with nothing else going on, and
+     * wakes early (then just re-checks and goes back to sleep) on any
+     * other interrupt -- e.g. SUBGHZ_Radio_IRQn, which is a real NVIC
+     * interrupt on this build (see ipcc_m0plus_main.c's
+     * HAL_NVIC_EnableIRQ(SUBGHZ_Radio_IRQn)), so a radio event during a
+     * delay (CW keying gaps, inter-burst pacing) still lands the same
+     * instant it would have with the old busy-wait. Unsigned
+     * subtraction makes this correct across the eventual g_system_tick_ms
+     * wraparound at ~49.7 days uptime. Power: this is the difference
+     * between full active-mode current and Sleep-mode current for
+     * every millisecond this firmware ever spends waiting -- on a
+     * power-constrained CubeSat, that was the single biggest fixable
+     * power cost in this file. */
+    uint32_t start = g_system_tick_ms;
+    while ((g_system_tick_ms - start) < ms)
     {
-        for (volatile uint32_t i = 0; i < 6000; i++)
-        {
-            __NOP();
-        }
+        __WFI();
     }
 }

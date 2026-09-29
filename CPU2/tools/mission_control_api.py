@@ -82,7 +82,7 @@ CLI_OPCODES = {
     "SATLOG": 0x18, "DIGIPEATER": 0x17, "RETRANSMIT": 0x19, "ABORT": 0x03,
 }
 
-_RE_CYCLE_PHASE = re.compile(r"CYCLE PHASE:\s*(CW|BEACON1|MISSION|BEACON2)")
+_RE_CYCLE_PHASE = re.compile(r"CYCLE PHASE:\s*(CW1|MISSION1|CW2|MISSION2)")
 _RE_DIGI_DUP = re.compile(r"DIGI: duplicate, not re-relaying")
 _RE_DIGI_RELAYED = re.compile(
     r"DIGI: relayed via hop (\d+) \(([^)]+)\), (\d+) info byte\(s\), rs_corrected=(-?\d+)")

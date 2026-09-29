@@ -359,7 +359,18 @@ class RxWorker(QThread):
             if self.source_kind == "file":
                 path, fmt = self.source_args["path"], self.source_args["format"]
                 self.frame_event.emit(f"--- loading {path} ({fmt}) ---")
-                iq = gd.read_iq_file_u8(path) if fmt == "u8" else gd.read_iq_file_cf32(path)
+                if fmt == "wav":
+                    # WAV carries its own sample rate (e.g. an SDR-Console
+                    # IQ recording) -- that's authoritative, overriding
+                    # whatever the GUI's sample-rate field happened to say.
+                    iq, wav_rate = gd.read_iq_file_wav(path)
+                    if wav_rate != self.sample_rate:
+                        self.frame_event.emit(
+                            f"--- WAV header sample rate {wav_rate:.0f} sps overrides "
+                            f"GUI setting {self.sample_rate:.0f} sps ---")
+                        self.sample_rate = wav_rate
+                else:
+                    iq = gd.read_iq_file_u8(path) if fmt == "u8" else gd.read_iq_file_cf32(path)
                 self.frame_event.emit(f"--- {len(iq)} samples loaded, processing ---")
                 chunk = int(self.sample_rate * self.chunk_seconds)
                 overlap = int(self.sample_rate * 0.2)
@@ -801,11 +812,12 @@ class MainWindow(QMainWindow):
         cfg_layout.addWidget(self.ppm_spin)
 
         self.file_edit = QLineEdit()
-        self.file_edit.setPlaceholderText("path to .iq (u8) or .cfile (cf32) capture")
+        self.file_edit.setPlaceholderText(
+            "path to .iq (u8), .cfile (cf32), or a stereo I/Q .wav (e.g. SDR-Console recording)")
         self.file_browse_btn = QPushButton("Browse...")
         self.file_browse_btn.clicked.connect(self._browse_file)
         self.file_fmt_combo = QComboBox()
-        self.file_fmt_combo.addItems(["u8 (rtl_sdr)", "cf32 (GNU Radio)"])
+        self.file_fmt_combo.addItems(["u8 (rtl_sdr)", "cf32 (GNU Radio)", "wav (stereo I/Q, e.g. SDR-Console)"])
         cfg_layout.addWidget(self.file_edit, 1)
         cfg_layout.addWidget(self.file_browse_btn)
         cfg_layout.addWidget(self.file_fmt_combo)
@@ -974,7 +986,7 @@ class MainWindow(QMainWindow):
             if not path or not os.path.isfile(path):
                 QMessageBox.warning(self, "No file", "Pick a valid IQ capture file first.")
                 return
-            fmt = "u8" if self.file_fmt_combo.currentIndex() == 0 else "cf32"
+            fmt = ["u8", "cf32", "wav"][self.file_fmt_combo.currentIndex()]
             source_kind = "file"
             source_args = {"path": path, "format": fmt}
         else:

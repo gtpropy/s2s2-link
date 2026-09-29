@@ -1,0 +1,25 @@
+# Python dependencies for CPU2/tools/*.py -- installed by ../../setup.sh
+# (pip install -r requirements.txt). PyQt6 is preferred; every GUI tool
+# falls back to PyQt5 automatically if PyQt6 isn't importable, so either
+# satisfies the *_gui.py / response_analyzer.py / satellite_gui.py tools.
+
+# GS/satellite serial link, real hardware
+pyserial>=3.5
+
+# GUI tools: s2s2_tx_gui.py, s2s2_rx_gui.py, satellite_gui.py, response_analyzer.py
+PyQt6>=6.6
+pyqtgraph>=0.13
+
+# gmsk_demod.py / ml_denoise.py / test_demod.py (SDR-side demod + denoiser)
+numpy>=1.24
+scipy>=1.11
+
+# s2s2_tx_gui.py's CW sidetone playback (optional -- checkbox no-ops without it)
+sounddevice>=0.4
+
+# mission_control_api.py (web dashboard backend)
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# flasher.py (build+flash TUI)
+textual>=0.58

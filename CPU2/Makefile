@@ -18,6 +18,19 @@
 #
 ############################################################################
 
+# A bare-metal cross build must never see the HOST toolchain's own header
+# search path -- CPATH/C_INCLUDE_PATH/CPLUS_INCLUDE_PATH/OBJC_INCLUDE_PATH
+# are inherited from the calling shell by any GCC-family compiler
+# regardless of how it's invoked (PATH lookup or absolute path), and a
+# stray one (e.g. a Python installer setting CPATH globally) silently
+# pulls host macOS/Linux headers into an ARM Cortex-M0+ compile. Some
+# toolchain builds just warn about it; others (seen: Homebrew's
+# arm-none-eabi-gcc 16.1.0, not the official ARM installer's 15.3.rel1)
+# fail outright with confusing "stray '#'" preprocessor errors deep in
+# their own bundled stdint.h. `unexport` strips these for every recipe
+# below, independent of what's polluting the user's shell.
+unexport CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH
+
 APP ?= satellite
 
 # BUILD=debug   (default) - DEBUG_BUILD defined: raw "TX <hex>" UART payload
@@ -61,14 +74,40 @@ endif
 
 # ==========================================================================
 # TOOLCHAIN
+#
+# Verified fact (found while debugging a real "stray '#' in program"
+# failure): on macOS there are TWO different `arm-none-eabi-gcc`
+# packages -- Homebrew's `arm-none-eabi-gcc` formula (symlinked onto
+# PATH, but its 16.x bottle fails to compile this project's real
+# sources) and the `gcc-arm-embedded` CASK (the official ARM GNU
+# Toolchain release, installs cleanly to /Applications/ArmGNUToolchain/
+# but is NOT put on PATH by casks). That's why this used to be a
+# hardcoded /Applications path -- not a preference, a necessity, just
+# one that broke on any machine without that exact cask.
+#
+# Resolution order: 1) ARM_TOOLCHAIN_BIN if the caller set one
+# (env var or `make ARM_TOOLCHAIN_BIN=/some/bin/dir`), 2) `.toolchain_path`
+# if `setup.sh` wrote one (it does this whenever it has to fall back to
+# the cask/off-PATH install), 3) bare `arm-none-eabi-gcc` on PATH.
 # ==========================================================================
 
-ARM_TOOLCHAIN_BIN = /Applications/ArmGNUToolchain/15.3.rel1/arm-none-eabi/bin
-
-CC      = $(ARM_TOOLCHAIN_BIN)/arm-none-eabi-gcc
-AS      = $(ARM_TOOLCHAIN_BIN)/arm-none-eabi-gcc
-OBJCOPY = $(ARM_TOOLCHAIN_BIN)/arm-none-eabi-objcopy
-SIZE    = $(ARM_TOOLCHAIN_BIN)/arm-none-eabi-size
+ARM_TOOLCHAIN_BIN ?=
+ifeq ($(ARM_TOOLCHAIN_BIN),)
+  ifneq ($(wildcard .toolchain_path),)
+    ARM_TOOLCHAIN_BIN := $(shell cat .toolchain_path)
+  endif
+endif
+ifeq ($(ARM_TOOLCHAIN_BIN),)
+  CC      = arm-none-eabi-gcc
+  AS      = arm-none-eabi-gcc
+  OBJCOPY = arm-none-eabi-objcopy
+  SIZE    = arm-none-eabi-size
+else
+  CC      = $(ARM_TOOLCHAIN_BIN)/arm-none-eabi-gcc
+  AS      = $(ARM_TOOLCHAIN_BIN)/arm-none-eabi-gcc
+  OBJCOPY = $(ARM_TOOLCHAIN_BIN)/arm-none-eabi-objcopy
+  SIZE    = $(ARM_TOOLCHAIN_BIN)/arm-none-eabi-size
+endif
 
 
 # ==========================================================================
@@ -167,6 +206,7 @@ core/Src/s2s2_auth.c \
 core/Src/secrets.c \
 core/Src/tx_history.c \
 core/Src/cw_beacon.c \
+core/Src/mem_stats.c \
 core/Src/radio_app.c \
 core/Src/stm32wlxx_it.c \
 core/stm32_seq.c \
@@ -364,6 +404,26 @@ size: $(TARGET).elf
 
 
 # ==========================================================================
+# CLANGD / IDE SUPPORT
+#
+# clangd (and any other clang-tooling-based editor backend) auto-discovers
+# a `compile_flags.txt` in this directory and applies it to every source
+# file below it -- that's what actually resolves stm32wlxx_hal.h and every
+# other CubeWL/local include for your editor, independent of whether `make`
+# itself has ever been run. Derived from the real $(CFLAGS) above, so it
+# can't drift out of sync with the actual build -- re-run `make
+# compile_flags` (setup.sh does this automatically) whenever CFLAGS changes.
+# ==========================================================================
+
+compile_flags.txt: FORCE
+	@echo "$(CFLAGS)" | tr ' ' '\n' | grep -v '^$$' > compile_flags.txt
+	@echo "wrote compile_flags.txt ($$(wc -l < compile_flags.txt | tr -d ' ') flags)"
+
+.PHONY: compile_flags
+compile_flags: compile_flags.txt
+
+
+# ==========================================================================
 # CLEAN
 # ==========================================================================
 
@@ -380,4 +440,4 @@ clean:
 .PHONY: all flash sat flash_sat gs flash_gs \
         sat-debug sat-production gs-debug gs-production \
         flash-sat-debug flash-sat-production flash-gs-debug flash-gs-production \
-        size clean
+        size clean compile_flags

@@ -56,6 +56,41 @@ def read_iq_file_u8(path: str) -> np.ndarray:
     return (raw[0::2] + 1j * raw[1::2]).astype(np.complex64)
 
 
+def read_iq_file_wav(path: str):
+    """Reads a stereo IQ WAV recording -- what SDR-Console (and most
+    other SDR receiver apps: SDR#, HDSDR, ...) actually produce when
+    you record a pass, since none of them speak this project's bespoke
+    GMSK+FX.25 framing natively. Left channel = I, right = Q. Uses
+    scipy.io.wavfile rather than the stdlib `wave` module because it
+    also handles IEEE-float WAV (format code 3), which some SDR apps
+    use for wide-dynamic-range IQ capture, not just integer PCM.
+
+    Returns (iq: complex64 ndarray, sample_rate_hz: float) -- the WAV
+    header carries its own sample rate, unlike read_iq_file_u8/
+    read_iq_file_cf32's headerless rtl_sdr/.cfile formats where the
+    caller has to already know it.
+
+    Workflow this exists for: record the pass in SDR-Console as an IQ
+    WAV, then feed that file to s2s2_rx_gui.py (source: "IQ file",
+    format: "wav") or extract_candidate_frames() directly -- SDR-
+    Console is the RF front end / recorder, this repo's own demod chain
+    is still the only thing that actually decodes the protocol."""
+    from scipy.io import wavfile
+    sample_rate, data = wavfile.read(path)
+    if data.ndim != 2 or data.shape[1] != 2:
+        raise ValueError(
+            f"expected a 2-channel (I/Q) WAV file, got array shape {data.shape} -- "
+            "make sure the recording was saved as stereo IQ baseband, not mono audio")
+    if np.issubdtype(data.dtype, np.integer):
+        scale = float(np.iinfo(data.dtype).max)
+        i = data[:, 0].astype(np.float32) / scale
+        q = data[:, 1].astype(np.float32) / scale
+    else:
+        i = data[:, 0].astype(np.float32)
+        q = data[:, 1].astype(np.float32)
+    return (i + 1j * q).astype(np.complex64), float(sample_rate)
+
+
 def read_iq_file_cf32(path: str) -> np.ndarray:
     """Interleaved 32-bit float I/Q (GNU Radio's default .cfile format)."""
     raw = np.fromfile(path, dtype=np.float32)

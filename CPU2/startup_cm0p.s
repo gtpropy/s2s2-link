@@ -14,6 +14,7 @@
 
 .global IPCC_C2_RX_IRQHandler
 .global SUBGHZ_Radio_IRQHandler
+.global LPUART1_IRQHandler
 
 
 
@@ -179,8 +180,13 @@ g_vectors:
 .word Default_Handler
 
 
-/* IRQ29 LPUART1 */
-.word Default_Handler
+/* IRQ29 LPUART1 -- was Default_Handler (did nothing); real handler now
+   in uart_debug.c drains RDR into a ring buffer the instant each byte
+   arrives, fixing a real bug where UART command bytes got lost whenever
+   the main loop was busy elsewhere (a blocking ~15s CW beacon TX, most
+   notably) since the old polled-only RX had nowhere to hold bytes that
+   arrived while nothing was checking. */
+.word LPUART1_IRQHandler
 
 
 /* IRQ30 SUBGHZSPI */
@@ -351,3 +357,6 @@ b Default_Handler
 
 .weak SUBGHZ_Radio_IRQHandler
 .thumb_set SUBGHZ_Radio_IRQHandler,Default_Handler
+
+.weak LPUART1_IRQHandler
+.thumb_set LPUART1_IRQHandler,Default_Handler

@@ -76,6 +76,9 @@
 #define LPUART1_ISR \
   (*(volatile uint32_t *)(LPUART1_BASE + 0x1CUL))
 
+#define LPUART1_ICR \
+  (*(volatile uint32_t *)(LPUART1_BASE + 0x20UL))
+
 #define LPUART1_RDR \
   (*(volatile uint32_t *)(LPUART1_BASE + 0x24UL))
 
@@ -95,6 +98,35 @@
 
 #define USART_ISR_RXNE  (1UL << 5)
 #define USART_ISR_TXE   (1UL << 7)
+#define USART_ISR_ORE   (1UL << 3)
+#define USART_ICR_ORECF (1UL << 3)
+#define USART_CR1_RXNEIE (1UL << 5)
+
+
+/*
+ * ==========================================================================
+ * RX RING BUFFER (interrupt-driven)
+ * ==========================================================================
+ *
+ * Real bug found and fixed 2026-09-28: uart2_try_getc() used to poll
+ * LPUART1_ISR/RDR directly, once per main-loop iteration. This LPUART
+ * has a single-byte RDR with no hardware FIFO, so any byte that arrived
+ * while the main loop was busy elsewhere -- most notably during a CW
+ * Morse beacon TX, which blocks for the whole ~15s message duration
+ * (cw_beacon_send() has no background/async variant) -- got silently
+ * overrun and lost, with no error indication. A UART command sent
+ * during or shortly before a CW beacon was transmitting would never be
+ * received at all. This ring buffer, filled from the real LPUART1 RX
+ * interrupt instead of polling, decouples reception from however busy
+ * the main loop happens to be: the ISR drains RDR the instant each byte
+ * arrives, regardless of what else is running. 128 bytes is generous
+ * for a UART running well under CMD_LINE_MAX-length interactive lines.
+ */
+#define UART2_RX_RING_SIZE 128U  /* power of 2 -- cheap wraparound via & */
+
+static volatile uint8_t  s_rx_ring[UART2_RX_RING_SIZE];
+static volatile uint16_t s_rx_head = 0;  /* next slot the ISR will fill */
+static volatile uint16_t s_rx_tail = 0;  /* next slot uart2_try_getc() will read */
 
 
 /*
@@ -246,6 +278,52 @@ void uart2_init(void)
    */
 
   LPUART1_CR1 |= USART_CR1_UE;
+
+  /*
+   * ----------------------------------------------------------
+   * 11. Enable RX-not-empty interrupt -- see the RX ring buffer
+   *     block above for why this replaced pure polling.
+   * ----------------------------------------------------------
+   */
+
+  LPUART1_CR1 |= USART_CR1_RXNEIE;
+}
+
+
+/*
+ * ==========================================================================
+ * LPUART1_IRQHandler
+ * ==========================================================================
+ *
+ * Real ISR, wired into the vector table in startup_cm0p.s (IRQ29 used to
+ * hardcode Default_Handler -- see that file's comment). Runs the
+ * instant a byte arrives, regardless of what the main loop is doing;
+ * this is the actual fix, not just the ring buffer -- a ring buffer
+ * fed by polling would have the exact same loss problem the old code
+ * had.
+ */
+void LPUART1_IRQHandler(void)
+{
+  if (LPUART1_ISR & USART_ISR_ORE)
+    {
+      LPUART1_ICR = USART_ICR_ORECF;
+    }
+
+  if (LPUART1_ISR & USART_ISR_RXNE)
+    {
+      uint8_t c = (uint8_t)(LPUART1_RDR & 0xFFUL);
+      uint16_t next_head = (uint16_t)((s_rx_head + 1U) & (UART2_RX_RING_SIZE - 1U));
+
+      /* Drop the byte on a full ring rather than overwrite unread data
+         -- a dropped byte breaks the current line same as before (no
+         worse than the old behavior), but never corrupts a DIFFERENT,
+         already-buffered line by clobbering it. */
+      if (next_head != s_rx_tail)
+        {
+          s_rx_ring[s_rx_head] = c;
+          s_rx_head = next_head;
+        }
+    }
 }
 
 
@@ -339,12 +417,21 @@ int uart2_try_getc(uint8_t *out_byte)
       return 0;
     }
 
-  if (LPUART1_ISR & USART_ISR_RXNE)
+  /* Pops from the interrupt-filled ring buffer (see the block above
+   * uart2_init()/LPUART1_IRQHandler) instead of polling hardware
+   * directly -- see that comment for the real bug this replaced (bytes
+   * silently lost whenever the main loop was busy elsewhere, e.g. for
+   * the ~15s of a blocking CW beacon TX). s_rx_tail is only ever
+   * written here (single reader, the main loop), s_rx_head only in the
+   * ISR (single writer) -- no lock needed for this producer/consumer
+   * pattern on a single core.
+   */
+  if (s_rx_tail == s_rx_head)
     {
-      *out_byte = (uint8_t)(LPUART1_RDR & 0xFFUL);
-
-      return 1;
+      return 0;  /* ring empty */
     }
 
-  return 0;
+  *out_byte = s_rx_ring[s_rx_tail];
+  s_rx_tail = (uint16_t)((s_rx_tail + 1U) & (UART2_RX_RING_SIZE - 1U));
+  return 1;
 }

@@ -78,21 +78,27 @@ extern "C" {
 #endif
 
 /*
- * Data rate (unchanged from the GFSK design).
+ * Data rate. 4800 bps -- the S2S2_PHASE_MID design point in s2s2com.h's
+ * per-elevation table, now the fixed operating rate (not just a
+ * mid-pass fallback): better link margin than 9600 at only half the
+ * throughput, without the 1200 bps HORIZON phase's convolutional-code
+ * overhead.
  */
-#define RADIO_BIT_RATE_BPS             9600
+#define RADIO_BIT_RATE_BPS             4800
 
 /*
  * GMSK frequency deviation: Fdev = bitrate/4 for h = 0.5.
  */
-#define RADIO_FDEV_HZ                  2400
+#define RADIO_FDEV_HZ                  1200
 
 /*
  * SX126x RX bandwidth. Carson's rule: BW > bitrate + 2*Fdev + freq_error,
- * i.e. > 9600 + 4800 = 14400 Hz minimum; 19500 Hz gives margin for
- * frequency error while staying tight around the narrower GMSK spectrum.
+ * i.e. > 4800 + 2400 = 7200 Hz minimum; 9700 Hz is the nearest real
+ * SX126x discrete bandwidth step (sx126x.c's GFSK bandwidth table) above
+ * that minimum -- same margin ratio the previous 9600 bps/19500 Hz pair
+ * used (its 19500 Hz was itself an exact table step, not a round number).
  */
-#define RADIO_RX_BANDWIDTH_HZ         19500
+#define RADIO_RX_BANDWIDTH_HZ          9700
 
 /*
  * 128 bits = 16 bytes.
