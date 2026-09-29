@@ -14,6 +14,13 @@ pyqtgraph>=0.13
 numpy>=1.24
 scipy>=1.11
 
+# s2s2_test_suite.py's SDR pane / s2s2_rx_gui.py's RTL-SDR live source
+# (gmsk_demod.py's RtlSdrSource) -- needs the system librtlsdr library too
+# (setup.sh installs that separately: apt `rtl-sdr`/`librtlsdr-dev` on
+# Linux, `brew install librtlsdr` on macOS). Lazily imported, so nothing
+# using file-based IQ capture instead of live hardware needs this at all.
+pyrtlsdr>=0.3
+
 # s2s2_tx_gui.py's CW sidetone playback (optional -- checkbox no-ops without it)
 sounddevice>=0.4
 

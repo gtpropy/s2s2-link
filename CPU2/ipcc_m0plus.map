@@ -221,7 +221,7 @@ Discarded input sections
  .debug_rnglists
                 0x00000000       0xea core/stm32_seq.o
  .debug_line    0x00000000      0xde8 core/stm32_seq.o
- .debug_str     0x00000000      0x71f core/stm32_seq.o
+ .debug_str     0x00000000      0x72a core/stm32_seq.o
  .comment       0x00000000       0x47 core/stm32_seq.o
  .debug_frame   0x00000000      0x1bc core/stm32_seq.o
  .ARM.attributes
@@ -908,7 +908,7 @@ Discarded input sections
  .debug_rnglists
                 0x00000000      0x1b8 hal/stm32wlxx_hal_pwr_ex.o
  .debug_line    0x00000000      0xcb5 hal/stm32wlxx_hal_pwr_ex.o
- .debug_str     0x00000000      0xb48 hal/stm32wlxx_hal_pwr_ex.o
+ .debug_str     0x00000000      0xb53 hal/stm32wlxx_hal_pwr_ex.o
  .comment       0x00000000       0x47 hal/stm32wlxx_hal_pwr_ex.o
  .debug_frame   0x00000000      0x320 hal/stm32wlxx_hal_pwr_ex.o
  .ARM.attributes
@@ -939,7 +939,7 @@ Discarded input sections
  .debug_rnglists
                 0x00000000       0x5b bsp/stm32wlxx_nucleo_radio.o
  .debug_line    0x00000000      0x427 bsp/stm32wlxx_nucleo_radio.o
- .debug_str     0x00000000      0x617 bsp/stm32wlxx_nucleo_radio.o
+ .debug_str     0x00000000      0x622 bsp/stm32wlxx_nucleo_radio.o
  .comment       0x00000000       0x47 bsp/stm32wlxx_nucleo_radio.o
  .debug_frame   0x00000000       0x98 bsp/stm32wlxx_nucleo_radio.o
  .ARM.attributes
@@ -2664,90 +2664,90 @@ LOAD linker stubs
  .debug_line    0x0001c31c      0x5b3 hal/stm32wlxx_hal_pwr.o
  .debug_line    0x0001c8cf       0x78 startup_cm0p.o
 
-.debug_str      0x00000000     0x8bb1
- .debug_str     0x00000000     0x8bb1 ipcc_m0plus_main.o
+.debug_str      0x00000000     0x8b8e
+ .debug_str     0x00000000     0x8b8e ipcc_m0plus_main.o
                                0x258a (size before relaxing)
- .debug_str     0x00008bb1        0x0 uart_debug.o
+ .debug_str     0x00008b8e        0x0 uart_debug.o
                                 0x240 (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/Src/rs.o
-                                0x369 (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/Src/cubus_proto.o
-                                0x2fe (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/Src/ax25.o
-                                0x29e (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/Src/ax25_digi.o
-                                0x300 (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/Src/fx25.o
-                                0x38a (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/Src/cubus_ax25.o
-                                0x41e (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/Src/s2s2_commands.o
-                                0x5db (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/Src/s2s2_auth.o
-                                0x2b7 (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/Src/secrets.o
-                                0x166 (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/Src/tx_history.o
-                                0x24f (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/Src/cw_beacon.o
+ .debug_str     0x00008b8e        0x0 core/Src/rs.o
+                                0x374 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/Src/cubus_proto.o
+                                0x309 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/Src/ax25.o
+                                0x2a9 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/Src/ax25_digi.o
+                                0x30b (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/Src/fx25.o
+                                0x395 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/Src/cubus_ax25.o
+                                0x429 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/Src/s2s2_commands.o
+                                0x5e6 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/Src/s2s2_auth.o
+                                0x2c2 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/Src/secrets.o
+                                0x171 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/Src/tx_history.o
+                                0x25a (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/Src/cw_beacon.o
                                 0x37e (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/Src/mem_stats.o
+ .debug_str     0x00008b8e        0x0 core/Src/mem_stats.o
                                 0x1fc (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/Src/radio_app.o
-                               0x1cdb (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/Src/stm32wlxx_it.o
+ .debug_str     0x00008b8e        0x0 core/Src/radio_app.o
+                               0x1ce6 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/Src/stm32wlxx_it.o
                                 0x219 (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/stm32_lpm.o
-                                0x482 (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/stm32_mem.o
-                                0x1dd (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/system_stm32wlxx.o
-                                0x422 (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/timer_if.o
-                                0xc8f (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/rtc.o
-                                0xb3f (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/error_handler.o
-                                0x189 (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/stm32_adv_trace.o
-                                0x8b8 (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/stm32_tiny_vsnprintf.o
-                                0x23e (size before relaxing)
- .debug_str     0x00008bb1        0x0 core/stm32_trace_driver.o
-                                0x3d6 (size before relaxing)
- .debug_str     0x00008bb1        0x0 radio_driver/radio.o
-                               0x293d (size before relaxing)
- .debug_str     0x00008bb1        0x0 radio_driver/radio_driver.o
-                               0x1ec3 (size before relaxing)
- .debug_str     0x00008bb1        0x0 radio_driver/radio_fw.o
-                                0xda8 (size before relaxing)
- .debug_str     0x00008bb1        0x0 radio_driver/stm32_timer.o
-                                0x723 (size before relaxing)
- .debug_str     0x00008bb1        0x0 radio_driver/sys_app.o
-                                0xb56 (size before relaxing)
- .debug_str     0x00008bb1        0x0 target/radio_board_if.o
-                                0x5e4 (size before relaxing)
- .debug_str     0x00008bb1        0x0 subghz/subghz.o
-                                0x7c3 (size before relaxing)
- .debug_str     0x00008bb1        0x0 hal/stm32wlxx_hal.o
-                                0xc8f (size before relaxing)
- .debug_str     0x00008bb1        0x0 hal/stm32wlxx_hal_subghz.o
-                                0xe0f (size before relaxing)
- .debug_str     0x00008bb1        0x0 hal/stm32wlxx_hal_rtc.o
-                                0x8b2 (size before relaxing)
- .debug_str     0x00008bb1        0x0 hal/stm32wlxx_hal_rtc_ex.o
-                                0xdad (size before relaxing)
- .debug_str     0x00008bb1        0x0 hal/stm32wlxx_hal_rcc.o
-                                0xeae (size before relaxing)
- .debug_str     0x00008bb1        0x0 hal/stm32wlxx_hal_rcc_ex.o
-                                0xcd6 (size before relaxing)
- .debug_str     0x00008bb1        0x0 hal/stm32wlxx_hal_gpio.o
-                                0x442 (size before relaxing)
- .debug_str     0x00008bb1        0x0 hal/stm32wlxx_hal_cortex.o
-                                0x765 (size before relaxing)
- .debug_str     0x00008bb1        0x0 hal/stm32wlxx_hal_pwr.o
-                                0x5f8 (size before relaxing)
- .debug_str     0x00008bb1        0x0 startup_cm0p.o
+ .debug_str     0x00008b8e        0x0 core/stm32_lpm.o
+                                0x48d (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/stm32_mem.o
+                                0x1e8 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/system_stm32wlxx.o
+                                0x42d (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/timer_if.o
+                                0xc9a (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/rtc.o
+                                0xb4a (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/error_handler.o
+                                0x194 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/stm32_adv_trace.o
+                                0x8c3 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/stm32_tiny_vsnprintf.o
+                                0x249 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 core/stm32_trace_driver.o
+                                0x3e1 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 radio_driver/radio.o
+                               0x2948 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 radio_driver/radio_driver.o
+                               0x1ece (size before relaxing)
+ .debug_str     0x00008b8e        0x0 radio_driver/radio_fw.o
+                                0xdb3 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 radio_driver/stm32_timer.o
+                                0x72e (size before relaxing)
+ .debug_str     0x00008b8e        0x0 radio_driver/sys_app.o
+                                0xb61 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 target/radio_board_if.o
+                                0x5ef (size before relaxing)
+ .debug_str     0x00008b8e        0x0 subghz/subghz.o
+                                0x7ce (size before relaxing)
+ .debug_str     0x00008b8e        0x0 hal/stm32wlxx_hal.o
+                                0xc9a (size before relaxing)
+ .debug_str     0x00008b8e        0x0 hal/stm32wlxx_hal_subghz.o
+                                0xe1a (size before relaxing)
+ .debug_str     0x00008b8e        0x0 hal/stm32wlxx_hal_rtc.o
+                                0x8bd (size before relaxing)
+ .debug_str     0x00008b8e        0x0 hal/stm32wlxx_hal_rtc_ex.o
+                                0xdb8 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 hal/stm32wlxx_hal_rcc.o
+                                0xeb9 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 hal/stm32wlxx_hal_rcc_ex.o
+                                0xce1 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 hal/stm32wlxx_hal_gpio.o
+                                0x44d (size before relaxing)
+ .debug_str     0x00008b8e        0x0 hal/stm32wlxx_hal_cortex.o
+                                0x770 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 hal/stm32wlxx_hal_pwr.o
+                                0x603 (size before relaxing)
+ .debug_str     0x00008b8e        0x0 startup_cm0p.o
                                  0x59 (size before relaxing)
 
 .comment        0x00000000       0x46

@@ -29,14 +29,32 @@
 #      CPATH globally) leaks host headers into the cross-compile; the
 #      Makefile now `unexport`s those for every recipe regardless of
 #      what's polluting your shell.
+#   5. (Linux only) The ST-Link's raw USB device node and the Nucleo's
+#      /dev/ttyACM*-style debug UART are both root-owned by default on
+#      a fresh Linux install -- neither macOS nor a distro that already
+#      has stlink-tools' own udev rules installed hits this, which is
+#      why it's easy to miss. This script installs the missing udev
+#      rules and adds you to the `dialout` group, interactively (both
+#      need sudo, so it asks first rather than silently changing system
+#      config).
 #
 # What this does NOT do: download the STM32CubeWL SDK. ST gates that
 # behind a click-through license on their own site -- there's no stable
 # direct-download URL to script against honestly, so this prints the
 # exact path it expects and the page to get it from instead of guessing.
+# Also does not build CPU1 (NuttX) by default -- kconfig-frontends is
+# offered as an interactive opt-in near the end, since most work on
+# this repo is CPU2-only and that build is a separate, heavier step.
 #
 # Written for portability across bash versions (macOS ships bash 3.2)
 # -- no associative arrays, no empty-array expansion under `set -u`.
+#
+# Interactive: every step that would use sudo (installing udev rules,
+# adding you to a group, or building+installing kconfig-frontends)
+# explicitly asks first, defaulting to "no" on a bare Enter. Everything
+# else (package manager installs of openocd/stlink-tools/arm toolchain,
+# the Python venv, compile_flags.txt) proceeds without asking, matching
+# how this script has always behaved for those steps.
 #
 # Usage:
 #   ./setup.sh              # full setup
@@ -234,6 +252,123 @@ else
 fi
 
 # =====================================================================
+# Interactive confirm helper -- used only for the Linux-specific,
+# sudo-requiring steps below (udev rules, group membership, building
+# kconfig-frontends from source). Skips with a warning instead of
+# hanging if stdin isn't a real TTY (e.g. this script piped into bash),
+# and always skips under --check (report-only, change nothing).
+# =====================================================================
+
+confirm() {
+  local prompt="$1"
+  if [ "$CHECK_ONLY" = 1 ]; then return 1; fi
+  if [ ! -t 0 ]; then
+    warn "non-interactive shell, skipping: $prompt (re-run ./setup.sh directly in a terminal to be asked)"
+    return 1
+  fi
+  local reply
+  read -r -p "  $prompt [y/N] " reply
+  case "$reply" in
+    [yY]|[yY][eE][sS]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# =====================================================================
+# Linux-only: ST-Link USB permissions (udev rules) + serial port group
+# membership. The single biggest real-world Linux gotcha for this repo
+# -- without these, every st-flash/openocd/JTAG command and every
+# CPU2/tools/*.py serial connection needs sudo, since USB/tty device
+# nodes are root-owned by default. macOS/homebrew's stlink cask needs
+# neither (its access model is already user-level), which is why this
+# section is Linux-only.
+# =====================================================================
+
+if [ "$PLATFORM" = linux ]; then
+  step "Linux: ST-Link USB permissions (udev rules)"
+  if compgen -G "/etc/udev/rules.d/*stlink*" >/dev/null 2>&1 \
+     || compgen -G "/lib/udev/rules.d/*stlink*" >/dev/null 2>&1 \
+     || compgen -G "/usr/lib/udev/rules.d/*stlink*" >/dev/null 2>&1; then
+    ok "ST-Link udev rules already present (installed by the stlink-tools package, or a prior run of this script)"
+  elif [ "$CHECK_ONLY" = 1 ]; then
+    fail "no ST-Link udev rules found -- every st-flash/openocd command will need sudo until fixed"
+  else
+    echo "  Without udev rules, the ST-Link's raw USB device node is root-owned, so every"
+    echo "  st-flash/openocd command needs sudo. VID:PID list below matches the same"
+    echo "  variants OpenOCD's own interface/stlink.cfg already recognizes (V2/V2-1/V3)."
+    if confirm "Install ST-Link udev rules to /etc/udev/rules.d/49-stlink.rules (needs sudo)?"; then
+      sudo tee /etc/udev/rules.d/49-stlink.rules > /dev/null <<'EOF'
+# ST-Link V2 / V2-1 / V3 -- USB permissions for non-root access.
+# VID:PID list matches OpenOCD's interface/stlink.cfg hla_vid_pid entries.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="3744", MODE="0666", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="3748", MODE="0666", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="374b", MODE="0666", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="374d", MODE="0666", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="374e", MODE="0666", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="374f", MODE="0666", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="3752", MODE="0666", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="3753", MODE="0666", GROUP="plugdev", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="3754", MODE="0666", GROUP="plugdev", TAG+="uaccess"
+EOF
+      sudo udevadm control --reload-rules 2>/dev/null
+      sudo udevadm trigger 2>/dev/null
+      ok "wrote /etc/udev/rules.d/49-stlink.rules -- unplug/replug the ST-Link for it to take effect"
+    else
+      warn "skipped -- st-flash/openocd will need sudo until you install these rules"
+    fi
+  fi
+
+  step "Linux: serial port access (dialout group)"
+  if groups "$USER" 2>/dev/null | grep -qw dialout; then
+    ok "$USER is already in the 'dialout' group (needed for /dev/ttyACM*//dev/ttyUSB* access)"
+  elif [ "$CHECK_ONLY" = 1 ]; then
+    fail "$USER not in 'dialout' group -- opening the Nucleo's debug UART will need sudo until fixed"
+  else
+    echo "  Without this, CPU2/tools/*.py (or a plain screen/minicom) can't open the"
+    echo "  Nucleo's /dev/ttyACM0-style debug UART without sudo."
+    if confirm "Add $USER to the 'dialout' group (needs sudo; requires logout/login to take effect)?"; then
+      sudo usermod -aG dialout "$USER"
+      ok "added $USER to 'dialout' -- LOG OUT AND BACK IN (or reboot) for this to take effect"
+    else
+      warn "skipped -- serial tools will need sudo until you add yourself to 'dialout'"
+    fi
+  fi
+fi
+
+# =====================================================================
+# RTL-SDR system library -- pyrtlsdr (installed below via
+# requirements.txt) is a binding to this; without the actual library
+# and udev permissions, s2s2_test_suite.py's SDR pane connects to
+# nothing. rtl_test's own probe is the real test (a Python import alone
+# doesn't confirm the library is actually linkable/found).
+# =====================================================================
+
+step "RTL-SDR system library (librtlsdr)"
+if command -v rtl_test >/dev/null 2>&1; then
+  ok "librtlsdr found (rtl_test on PATH)"
+elif [ "$CHECK_ONLY" = 1 ]; then
+  fail "librtlsdr not found -- the SDR pane in s2s2_test_suite.py won't be able to connect"
+else
+  if [ "$PLATFORM" = macos ] && command -v brew >/dev/null 2>&1; then
+    brew install librtlsdr
+  elif [ "$PLATFORM" = linux ] && command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get install -y librtlsdr-dev rtl-sdr
+    if [ ! -f /etc/modprobe.d/blacklist-rtl.conf ]; then
+      echo "  The kernel's own dvb_usb_rtl28xxu driver auto-claims RTL2832U dongles by"
+      echo "  default on Linux, blocking rtl_test/pyrtlsdr from opening them at all."
+      if confirm "Blacklist dvb_usb_rtl28xxu so the RTL-SDR dongle is available to userspace tools (needs sudo)?"; then
+        echo "blacklist dvb_usb_rtl28xxu" | sudo tee /etc/modprobe.d/blacklist-rtl.conf > /dev/null
+        warn "wrote /etc/modprobe.d/blacklist-rtl.conf -- unplug/replug the RTL-SDR dongle (or reboot) for it to take effect"
+      fi
+    fi
+  else
+    warn "install librtlsdr manually for your platform (e.g. librtlsdr-dev on most Linux distros)"
+  fi
+  command -v rtl_test >/dev/null 2>&1 && ok "librtlsdr installed" \
+    || warn "still not found -- only matters if you use the SDR pane with a real RTL-SDR dongle"
+fi
+
+# =====================================================================
 # Python tooling (CPU2/tools/*.py)
 # =====================================================================
 
@@ -276,6 +411,93 @@ else
 fi
 
 # =====================================================================
+# Optional: NuttX Kconfig tools (kconfig-tweak, kconfig-mconf) -- only
+# needed if you also build CPU1 (the NuttX OBC firmware under nuttx/ +
+# apps/), not for CPU2 alone. Plain upstream kconfig-frontends is too
+# old to parse modern NuttX Kconfig's `imply` keyword (see MASTER.md),
+# so this builds the maintained fork from source -- no standard distro
+# package provides a new-enough version.
+# =====================================================================
+
+step "Optional: NuttX Kconfig tools (only needed to build CPU1)"
+if command -v kconfig-tweak >/dev/null 2>&1 && command -v kconfig-mconf >/dev/null 2>&1; then
+  ok "kconfig-tweak/kconfig-mconf already on PATH"
+elif [ "$CHECK_ONLY" = 1 ]; then
+  warn "kconfig-tweak/kconfig-mconf not found (only matters if you plan to build CPU1/NuttX)"
+else
+  if confirm "Build+install kconfig-frontends from source (github.com/patacongo/tools) -- only needed for CPU1/NuttX, skip if you're only working on CPU2?"; then
+    if [ "$PLATFORM" = linux ] && command -v apt-get >/dev/null 2>&1; then
+      sudo apt-get install -y build-essential gperf flex bison libncurses5-dev \
+        pkg-config autoconf automake libtool
+    elif [ "$PLATFORM" = macos ] && command -v brew >/dev/null 2>&1; then
+      brew install gperf flex bison ncurses autoconf automake libtool pkg-config
+    fi
+    KCONFIG_TMP="$(mktemp -d)"
+    if git clone --depth 1 https://github.com/patacongo/tools.git "$KCONFIG_TMP"; then
+      ( cd "$KCONFIG_TMP/kconfig-frontends" \
+        && ./configure --enable-mconf --disable-gconf --disable-qconf \
+        && make && sudo make install )
+      [ "$PLATFORM" = linux ] && sudo ldconfig 2>/dev/null
+    fi
+    rm -rf "$KCONFIG_TMP"
+    if command -v kconfig-tweak >/dev/null 2>&1; then
+      ok "kconfig-frontends installed"
+    else
+      fail "kconfig-frontends build failed -- see https://github.com/patacongo/tools for manual steps"
+    fi
+  else
+    warn "skipped -- fine if you're only building CPU2, needed before building CPU1"
+  fi
+fi
+
+# =====================================================================
+# Known gotchas -- real issues hit and root-caused on real hardware/a
+# real machine this project, that setup.sh can't fix automatically
+# (either they're one-time per-BOARD state, not per-machine, or the
+# root cause is still open). Documented here once, so the next person
+# doesn't have to re-derive them from scratch.
+# =====================================================================
+
+step "Known gotchas (read once, nothing to run here)"
+
+echo "  * \"#warning user to provide its board definitions pins\" during every CPU2"
+echo "    build (target/radio_board_if.h): this is expected and harmless. It's a"
+echo "    stock STM32CubeMX-generated placeholder that fires whenever USE_BSP_DRIVER"
+echo "    is undefined -- this project defines pins directly elsewhere instead of"
+echo "    through ST's BSP layer, so the placeholder is simply never filled in and"
+echo "    never needs to be. You do NOT need to run STM32CubeMX yourself for CPU2;"
+echo "    only the STM32CubeWL SDK checked for above is required."
+echo
+echo "  * Freshly-flashed board never produces any UART output at all, even though"
+echo "    flashing itself reports success: CPU2 (the M0+ core) only starts running"
+echo "    if FLASH_SRRVR's SBRV field already points at 0x08020000 (this firmware's"
+echo "    link address) -- on a board previously used with a different CPU2 image at"
+echo "    a different flash offset (e.g. an ST demo), it can be stale, and CPU2 just"
+echo "    stays held in reset forever with no error. This is PER-BOARD state in the"
+echo "    chip's own option bytes, not per-machine -- setup.sh can't detect or fix it"
+echo "    without a board connected. If you hit this: CPU2/tools/boot_cpu2.cfg is a"
+echo "    ready-made OpenOCD script that rewrites SBRV correctly (one-time per"
+echo "    board); it needs real dual-core SWD-DAP access, i.e. interface/stlink-dap.cfg"
+echo "    with 'transport select dapdirect_swd' and 'set DUAL_CORE 1' -- plain"
+echo "    interface/stlink.cfg (HLA transport, what plain st-flash/make flash_sat"
+echo "    use) cannot see CPU2 as a target at all, by design (HLA doesn't support"
+echo "    multicore debugging)."
+echo
+echo "  * Building CPU1 (NuttX OBC, cd nuttx && make) can silently pick up a"
+echo "    different, broken arm-none-eabi-gcc than the one this script just"
+echo "    verified: NuttX's own build system reads plain PATH, it does NOT consult"
+echo "    CPU2/.toolchain_path. If \`make\` inside nuttx/ fails with something like"
+echo "    \"math.h: No such file\" deep in libc, run \`which arm-none-eabi-gcc\` first --"
+echo "    if it's Homebrew's (/opt/homebrew or /usr/local) rather than the ARM GNU"
+echo "    Toolchain cask, put the cask's bin dir earlier in PATH before building CPU1."
+echo
+echo "  * apps/.config / apps/import/scripts/Make.defs missing, causing"
+echo "    'apps/libapps.a: No such file or directory' when building CPU1: hit this"
+echo "    once and did NOT find a fix in the time available -- \`make context\` from"
+echo "    nuttx/ did not regenerate apps/.config on that occasion. Unresolved; if you"
+echo "    hit this, you're in NuttX's own build-system territory, not this repo's."
+
+# =====================================================================
 # Summary
 # =====================================================================
 
@@ -284,4 +506,11 @@ echo "  Build + flash satellite:  cd CPU2 && make flash-sat-debug"
 echo "  Build + flash GS:         cd CPU2 && make flash-gs-debug"
 echo "  Same via TUI:              python3 CPU2/tools/flasher.py   (after: source CPU2/tools/.venv/bin/activate)"
 echo "  Mission control dashboard: python3 CPU2/tools/mission_control_api.py"
+echo "  S2S2 Test Suite (web GUI): python3 CPU2/tools/s2s2_test_suite.py"
+echo "  Build CPU1 (NuttX OBC):    cd nuttx && ./tools/configure.sh nucleo-wl55jc:demo && make -j4"
 echo "  Re-check without changing anything: ./setup.sh --check"
+if [ "$PLATFORM" = linux ]; then
+  echo
+  echo "  If this just added you to the 'dialout' group: log out and back in"
+  echo "  (or reboot) before /dev/ttyACM0-style ports work without sudo."
+fi
