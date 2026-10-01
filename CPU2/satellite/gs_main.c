@@ -31,6 +31,7 @@
 
 #include "config.h"
 #include "radio_app.h"
+#include "g3ruh.h"
 #include "s2s2com.h"
 #include "s2s2_commands.h"
 #include "s2s2_auth.h"
@@ -215,7 +216,10 @@ void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr)
     rx_last_rssi = rssi;
     rx_last_snr = snr;
     uint16_t copy_len = (size > FX25_FRAME_LEN) ? FX25_FRAME_LEN : size;
-    memcpy((void *)rx_chunk_buffer, payload, copy_len);
+    /* Undo the TX-side G3RUH scramble (see Send_FX25_Frame) before any
+       consumer ever sees this buffer -- matches ipcc_m0plus_main.c's
+       satellite-side OnRxDone. */
+    g3ruh_descramble_frame(payload, (uint8_t *)rx_chunk_buffer, copy_len);
     rx_chunk_size = copy_len;
     rx_done_flag = 1;
 }
@@ -264,8 +268,8 @@ static void Process_Received_Frame(void)
         if (ack_unpack(s_reassembler.payload, s_reassembler.payload_len, &ack) == 0)
         {
             uart2_printf(
-                "\r\nRX ACK: status=0x%02X (%s) data_id=0x%02X acked_seq=%u\r\n",
-                ack.status, ack_status_str(ack.status), ack.data_id, ack.acked_seq);
+                "\r\nRX ACK: status=0x%02X (%s) data_id=0x%02X\r\n",
+                ack.status, ack_status_str(ack.status), ack.data_id);
         }
         else
         {
@@ -355,7 +359,12 @@ static bool Radio_Send_And_Wait(uint8_t *buffer, uint16_t size, uint32_t timeout
    this firmware. */
 static bool Send_FX25_Frame(const uint8_t frame[FX25_FRAME_LEN])
 {
-    return Radio_Send_And_Wait((uint8_t *)frame, FX25_FRAME_LEN, TX_TIMEOUT_MS);
+    /* G3RUH-scramble (bit-exact with Direwolf's gen_tone.c) -- matches
+       ipcc_m0plus_main.c's satellite-side Send_FX25_Frame, so both ends
+       of the link (and a real Direwolf `-B 4800 -g`) agree. */
+    uint8_t scrambled[FX25_FRAME_LEN];
+    g3ruh_scramble_frame(frame, scrambled, FX25_FRAME_LEN);
+    return Radio_Send_And_Wait(scrambled, FX25_FRAME_LEN, TX_TIMEOUT_MS);
 }
 
 static uint16_t s_uplink_seq = 0;
@@ -384,19 +393,21 @@ static bool Send_Message(uint8_t type, uint16_t seq_num, uint8_t flags,
 
 /* Builds and uplinks one standard command packet (see s2s2_commands.h).
    address/num_packets are only meaningful for CMD_DOWNLOAD_FILE-style
-   opcodes; pass 0 for commands that don't use them. */
-static void Send_Command_Ex(uint8_t opcode, uint8_t subsystem, uint8_t data_id,
+   opcodes; pass 0 for commands that don't use them. sat_id and (for
+   CMD_RUN_CAMERA/CMD_DOWNLOAD_FILE) opcode_b2/b3 are filled in by
+   command_pack() itself -- see its comment in s2s2_commands.h. */
+static void Send_Command_Ex(uint8_t opcode, uint8_t mcu_id, uint16_t data_id,
                              uint32_t address, uint16_t num_packets)
 {
-    cubus_command_t cmd = { .opcode = opcode, .subsystem = subsystem, .data_id = data_id,
+    cubus_command_t cmd = { .mcu_id = mcu_id, .opcode_b1 = opcode, .data_id = data_id,
                              .address = address, .num_packets = num_packets,
                              .counter = s2s2_auth_next_counter() };
     uint8_t payload[COMMAND_PAYLOAD_LEN];
     command_pack(&cmd, payload);
     /* Sign after packing so the MAC covers the exact wire bytes
-       (opcode..counter, COMMAND_SIGNED_LEN of them), not the struct. */
+       (sat_id..counter, COMMAND_SIGNED_LEN of them), not the struct. */
     s2s2_auth_compute_mac(NODE_ID_GROUND, NODE_ID_SATELLITE,
-                           payload, COMMAND_SIGNED_LEN, &payload[13]);
+                           payload, COMMAND_SIGNED_LEN, &payload[COMMAND_SIGNED_LEN]);
 
     uint16_t seq = s_uplink_seq++;
     uart2_printf("\r\nTX COMMAND 0x%02X (seq=%u)\r\n", opcode, seq);
@@ -832,7 +843,7 @@ int main(void)
                 unsigned long num_packets = strtoul(p, &end, 10);
                 bad = bad || (end == p);
 
-                if (bad || opcode > 0xFF || subsystem > 0xFF || data_id > 0xFF ||
+                if (bad || opcode > 0xFF || subsystem > 0xFF || data_id > 0xFFFF ||
                     address > 0xFFFFFFFFUL || num_packets > 0xFFFF)
                 {
                     uart2_puts("ERR usage: CMD <opcode_hex> <subsys_hex> <data_id_hex> "
@@ -840,7 +851,7 @@ int main(void)
                 }
                 else
                 {
-                    Send_Command_Ex((uint8_t)opcode, (uint8_t)subsystem, (uint8_t)data_id,
+                    Send_Command_Ex((uint8_t)opcode, (uint8_t)subsystem, (uint16_t)data_id,
                                      (uint32_t)address, (uint16_t)num_packets);
                     Listen_For_Response(ACK_WAIT_MS);
                 }

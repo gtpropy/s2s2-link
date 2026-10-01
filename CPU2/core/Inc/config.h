@@ -137,6 +137,13 @@ extern "C" {
 #define AX25_GROUND_CALLSIGN    "GROUND"
 #define AX25_GROUND_SSID        0
 
+/* CW beacon identification (cw_beacon.h) -- the real, licensed amateur
+   callsign for on-air Morse ID, per Packet Format Sheet4. Deliberately
+   separate from AX25_SATELLITE_CALLSIGN above: that's the AX.25 packet-
+   layer station name ("NEPSAT"), not a real callsign. */
+#define CW_PROJECT_NAME "S2S2"
+#define CW_REAL_CALLSIGN "9N2SJ"
+
 /*
  * ============================================================
  * RADIO CONFIG

@@ -207,6 +207,7 @@ core/Src/secrets.c \
 core/Src/tx_history.c \
 core/Src/cw_beacon.c \
 core/Src/mem_stats.c \
+core/Src/g3ruh.c \
 core/Src/radio_app.c \
 core/Src/stm32wlxx_it.c \
 core/stm32_seq.c \

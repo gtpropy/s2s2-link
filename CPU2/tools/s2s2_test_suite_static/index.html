@@ -255,6 +255,7 @@
     <span id="mem-caret">&#9656;</span>
     <b>STM32 Memory Profile</b>
     <span id="mem-summary" style="color:var(--dim)">-- click to load --</span>
+    <span id="mem-live" style="color:var(--warn)"></span>
     <button id="mem-refresh" style="margin-left:auto">refresh</button>
   </div>
   <div class="memory-panel-body hidden" id="mem-panel-body"></div>
@@ -695,7 +696,31 @@ class PaneUI {
     }
     if (ev.kind === "ACTIVITY") {
       this.renderActivity(ev);
-      return; // activity strip only, the RAW line for the same log line already logs
+      return; // pure stat -- the activity bar already shows this, no separate log line needed
+    }
+    if (ev.kind === "CYCLE_PHASE") {
+      // Same redundancy MEMSTAT had: this is pure state (the activity
+      // bar's "phase:" field already shows it) -- the backend fires a
+      // full ACTIVITY event right alongside every CYCLE_PHASE match
+      // (activity_changed=True), which updates the whole bar including
+      // this new phase a moment later, so there's nothing to render
+      // here, just nothing to log either. Not a one-off action worth
+      // its own log line the way a beacon TX or a digipeat relay is --
+      // those keep logging normally.
+      return;
+    }
+    if (ev.kind === "MEMSTAT") {
+      // Real bug: this had no handler, so it fell through to the plain
+      // console log as a raw-looking text line -- redundant with (and
+      // more confusing than) the live numbers below, since the paired
+      // ACTIVITY event (activity_changed=True on the backend for a
+      // MEMSTAT match) already re-renders the per-pane activity bar's
+      // "LIVE stack" figure with the same data. Feed the global STM32
+      // Memory Profile panel too, so the one real-time number this repo
+      // has actually shows up where "the memory profile" lives, not
+      // just buried in a per-pane stats strip.
+      updateLiveMemoryFromMemstat(ev);
+      return;
     }
     if (ev.kind === "BATTERY_STARTED" || ev.kind === "BATTERY_STEP") {
       const badge = this.root.querySelector(`#battbadge-${this.paneId}`);
@@ -774,11 +799,22 @@ new PaneUI("b", paneB);
 // ---------------------------------------------------------------------
 // Global STM32 memory profile panel -- real arm-none-eabi-size/-nm
 // numbers off the built .elf (CPU2/ipcc_m0plus.elf), refreshed on
-// demand. Not a runtime profiler (bare-metal single-loop firmware has
-// no heap/task scheduler to sample without adding a firmware command);
-// this is the honest static number available today.
+// demand -- flash/RAM section sizes, link-time only, can't change while
+// running. The LIVE figure next to it (mem-live span) is the actual
+// runtime number: the satellite's real stack high-water-mark, from the
+// MEMSTAT UART command (core/Src/mem_stats.c's stack-painting), pushed
+// here the instant any connected pane sees a MEMSTAT response -- see
+// updateLiveMemoryFromMemstat() below and PaneUI.onEvent's MEMSTAT case.
 // ---------------------------------------------------------------------
 let memPanelOpen = false;
+
+function updateLiveMemoryFromMemstat(ev) {
+  const live = document.getElementById("mem-live");
+  if (!live) return;
+  const when = new Date((ev.ts || Date.now() / 1000) * 1000).toLocaleTimeString();
+  live.textContent = `LIVE stack (pane ${ev.pane}): ${ev.stack_used_bytes}/${ev.stack_total_bytes} B `
+    + `(${(100 * ev.stack_used_bytes / ev.stack_total_bytes).toFixed(1)}%) @ ${when}`;
+}
 
 async function loadMemoryProfile() {
   const summary = document.getElementById("mem-summary");

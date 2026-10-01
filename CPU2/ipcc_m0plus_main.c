@@ -27,6 +27,7 @@
 #include "tx_history.h"
 #include "cw_beacon.h"
 #include "mem_stats.h"
+#include "g3ruh.h"
 
 const RadioConfig_t SatelliteProfile = {
     .txFrequency = DEFAULT_TX_FREQUENCY_HZ,
@@ -125,7 +126,9 @@ void OnRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t snr) {
     rx_last_rssi = rssi;
     rx_last_snr = snr;
     uint16_t copy_len = (size < FX25_FRAME_LEN) ? size : FX25_FRAME_LEN;
-    memcpy((void *)rx_chunk_buffer, payload, copy_len);
+    /* Undo the TX-side G3RUH scramble (see Send_FX25_Frame) before any
+       consumer (main decode path, Try_Digipeat) ever sees this buffer. */
+    g3ruh_descramble_frame(payload, (uint8_t *)rx_chunk_buffer, copy_len);
     rx_chunk_size = copy_len;
     rx_done_flag = 1;
 }
@@ -209,7 +212,12 @@ static bool Radio_Send_And_Wait(uint8_t *buffer, uint16_t size, uint32_t timeout
    AX.25/FX.25 -- decodable by SatNOGS/gr-satellites/Direwolf, not just
    this firmware. */
 static bool Send_FX25_Frame(const uint8_t frame[FX25_FRAME_LEN]) {
-    return Radio_Send_And_Wait((uint8_t *)frame, FX25_FRAME_LEN, TX_TIMEOUT_MS);
+    /* G3RUH-scramble (bit-exact with Direwolf's gen_tone.c) so a real
+       Direwolf (`-B 4800 -g`) or any other G3RUH-capable AX.25/FX.25
+       receiver can decode this -- see g3ruh.h. */
+    uint8_t scrambled[FX25_FRAME_LEN];
+    g3ruh_scramble_frame(frame, scrambled, FX25_FRAME_LEN);
+    return Radio_Send_And_Wait(scrambled, FX25_FRAME_LEN, TX_TIMEOUT_MS);
 }
 
 /* Fragments one S2S2 message across AX.25/FX.25 frames and sends each.
@@ -375,7 +383,7 @@ static void Try_Digipeat(const uint8_t frame_copy[FX25_FRAME_LEN], uint16_t fram
    status code (see s2s2_commands.h) and the seq_num of the command it's
    acknowledging. */
 static void Send_Ack(uint8_t status, uint8_t data_id, uint16_t acked_seq) {
-    cubus_ack_t ack = { .status = status, .data_id = data_id, .acked_seq = acked_seq };
+    cubus_ack_t ack = { .status = status, .data_id = data_id };
     uint8_t payload[ACK_PAYLOAD_LEN];
     ack_pack(&ack, payload);
 
@@ -450,31 +458,40 @@ static void Send_Beacon_If_Due(void) {
     RadioApp_StartRx();
 }
 
-/* Coarse single-digit (0-9) telemetry code for the CW beacon message --
-   V, Gx, Gy, Gz, T, matching real amateur-CubeSat CW beacon practice
-   (JY1SAT/AO-40 heritage). NO ADCS/EPDM sensor drivers are wired up on
-   this Nucleo bench build -- same honest gap as CMD_GET_ADCS/
-   CMD_GET_HOUSEKEEPING's "not available on this build" replies above.
-   These five digits are fixed placeholders until real battery/gyro/
-   thermal hardware exists; swapping in real ADC/IMU reads here is the
-   entire integration point, nothing else about the beacon changes. */
-static void Get_Cw_Telemetry_Digits(char out[6]) {
-    out[0] = '0'; /* V  */
-    out[1] = '0'; /* Gx */
-    out[2] = '0'; /* Gy */
-    out[3] = '0'; /* Gz */
-    out[4] = '0'; /* T  */
-    out[5] = '\0';
+/* Real bit-packed housekeeping (Packet Format Sheet4/cw_beacon.h) --
+   everything is a placeholder (no real gyro/magneto/battery/solar
+   hardware wired up yet, same honesty pattern as Send_Beacon1/2's
+   beacon1_t/beacon2_t), except time_after_reset which is real uptime. */
+static void Build_Cw1_Hex(char out[CW_BEACON_HEX_LEN + 1]) {
+    cw_beacon1_t cw1;
+    memset(&cw1, 0, sizeof(cw1));
+    cw1.time_after_reset = (uint8_t)((Get_Time_Ms() / 1000 / 3600) & 0x0F);
+
+    uint8_t packed[CW_BEACON_PACKED_LEN];
+    cw_beacon1_pack(&cw1, packed);
+    cw_beacon_hex_encode(packed, CW_BEACON_PACKED_LEN, out);
 }
 
-/* Real, listenable-by-ear Morse CW beacon: "DE <CALLSIGN> <5 digits>".
-   Independent of the S2S2 AX.25/FX.25 link entirely -- keys the raw RF
-   carrier directly (RadioApp_KeyCw/cw_beacon.h), not a packet of any
-   kind, so it needs no seq_num/ACK/tx_history bookkeeping. */
-/* Real, listenable-by-ear Morse CW beacon: "DE <CALLSIGN> <5 digits>".
-   Independent of the S2S2 AX.25/FX.25 link entirely -- keys the raw RF
-   carrier directly (RadioApp_KeyCw/cw_beacon.h), not a packet of any
-   kind, so it needs no seq_num/ACK/tx_history bookkeeping.
+static void Build_Cw2_Hex(char out[CW_BEACON_HEX_LEN + 1]) {
+    cw_beacon2_t cw2;
+    memset(&cw2, 0, sizeof(cw2));
+
+    uint8_t packed[CW_BEACON_PACKED_LEN];
+    cw_beacon2_pack(&cw2, packed);
+    cw_beacon_hex_encode(packed, CW_BEACON_PACKED_LEN, out);
+}
+
+/* Real, listenable-by-ear Morse CW beacon: "<project> <real amateur
+   callsign> <16 hex digits>" (BIRDS4 convention -- see cw_beacon.h).
+   is_cw1 selects CW1 (power/battery) vs CW2 (gyro/magneto/solar)
+   housekeeping content; the two alternate per the satellite's CW1/
+   Mission1/CW2/Mission2 cycle (Cycle_Tick() below). Independent of the
+   S2S2 AX.25/FX.25 link entirely -- keys the raw RF carrier directly
+   (RadioApp_KeyCw/cw_beacon.h), not a packet of any kind, so it needs no
+   seq_num/ACK/tx_history bookkeeping. Uses CW_REAL_CALLSIGN (the actual
+   licensed amateur callsign, config.h), NOT AX25_SATELLITE_CALLSIGN
+   (the AX.25 packet-layer station name, "NEPSAT") -- on-air CW
+   identification must be the real callsign.
 
    NOTE 2026-09-28: a non-blocking (CwBeacon_Start/Tick/IsBusy) version
    of this was tried and reverted the same day -- it introduced a real,
@@ -490,12 +507,12 @@ static void Get_Cw_Telemetry_Digits(char out[6]) {
    couldn't complete during the block doesn't corrupt the next one
    sent after it). A command sent mid-CW still needs a retry; nothing
    is silently lost or corrupted anymore. */
-static void Send_Cw_Beacon(void) {
-    char digits[6];
-    Get_Cw_Telemetry_Digits(digits);
+static void Send_Cw_Beacon(bool is_cw1) {
+    char hex[CW_BEACON_HEX_LEN + 1];
+    if (is_cw1) Build_Cw1_Hex(hex); else Build_Cw2_Hex(hex);
 
-    char message[32];
-    snprintf(message, sizeof(message), "DE %s %s", AX25_SATELLITE_CALLSIGN, digits);
+    char message[48];
+    snprintf(message, sizeof(message), "%s %s %s", CW_PROJECT_NAME, CW_REAL_CALLSIGN, hex);
 
     uart2_printf("\r\nCW BEACON TX: \"%s\"\r\n", message);
     cw_beacon_send(message, CW_DEFAULT_WPM);
@@ -573,7 +590,7 @@ static void Cycle_Tick(void) {
 #ifdef DEBUG_BUILD
             if (s_beacon_enabled) {
 #endif
-                Send_Cw_Beacon();
+                Send_Cw_Beacon(true);
 #ifdef DEBUG_BUILD
             }
 #endif
@@ -594,7 +611,7 @@ static void Cycle_Tick(void) {
 #ifdef DEBUG_BUILD
             if (s_beacon_enabled) {
 #endif
-                Send_Cw_Beacon();
+                Send_Cw_Beacon(false);
 #ifdef DEBUG_BUILD
             }
 #endif
@@ -770,8 +787,8 @@ static void Process_UART_Command(void) {
         uart2_printf("MEMSTAT stack_used=%lu stack_total=%lu\r\n",
                      (unsigned long)used, (unsigned long)total);
     } else if (!s_satellite_mode && str_ieq(command, "TESTCW")) {
-        uart2_puts("TESTCW: forcing an immediate CW beacon send\r\n");
-        Send_Cw_Beacon();
+        uart2_puts("TESTCW: forcing an immediate CW1 beacon send\r\n");
+        Send_Cw_Beacon(true);
     } else if (!s_satellite_mode && str_starts_ieq(command, "TXCW ")) {
         /* Arbitrary operator-supplied CW text, distinct from TESTCW's
            fixed "DE <CALLSIGN> <5 digits>" telemetry format -- same
@@ -957,7 +974,7 @@ int main(void) {
                 }
 
                 uart2_printf(" *** COMMAND RECEIVED: YES (from node %u, opcode 0x%02X) ***\r\n",
-                             s_reassembler.src_id, cmd.opcode);
+                             s_reassembler.src_id, cmd.opcode_b1);
                 bool want_ack = (s_reassembler.flags & FLAG_ACK_REQUESTED) != 0;
                 uint16_t cmd_seq = s_reassembler.seq_num;
 
@@ -982,7 +999,7 @@ int main(void) {
                     break;
                 }
 
-                switch (cmd.opcode) {
+                switch (cmd.opcode_b1) {
                     case CMD_REQUEST_BURST:
                         if ((Get_Time_Ms() - last_burst_finish_time) < 4000) {
                             uart2_puts("CMD_REQUEST_BURST duplicate packet - ignoring\r\n");
@@ -1017,16 +1034,16 @@ int main(void) {
                         /* Subsystem sensor drivers (ADCS/EPDM/OBC file store) aren't
                            wired up in this firmware yet - reply honestly instead of
                            fabricating data. */
-                        uart2_printf("opcode 0x%02X: requested data not available on this build\r\n", cmd.opcode);
-                        if (want_ack) Send_Ack(ACK_STATUS_DATA_UNAVAILABLE, cmd.data_id, cmd_seq);
+                        uart2_printf("opcode 0x%02X: requested data not available on this build\r\n", cmd.opcode_b1);
+                        if (want_ack) Send_Ack(ACK_STATUS_DATA_UNAVAILABLE, (uint8_t)cmd.data_id, cmd_seq);
                         app_state = STATE_IDLE_RX;
                         break;
 
                     case CMD_RUN_CAMERA:
                     case CMD_DOWNLOAD_FILE:
                         /* Camera/file missions not implemented in this build. */
-                        uart2_printf("opcode 0x%02X: mission not implemented on this build\r\n", cmd.opcode);
-                        if (want_ack) Send_Ack(ACK_STATUS_MISSION_INACTIVE, cmd.data_id, cmd_seq);
+                        uart2_printf("opcode 0x%02X: mission not implemented on this build\r\n", cmd.opcode_b1);
+                        if (want_ack) Send_Ack(ACK_STATUS_MISSION_INACTIVE, (uint8_t)cmd.data_id, cmd_seq);
                         app_state = STATE_IDLE_RX;
                         break;
 
@@ -1039,7 +1056,7 @@ int main(void) {
                            or competes with scheduled S2S2 traffic. */
                         s_digipeater_enabled = true;
                         uart2_puts("CMD_DIGIPEATER: digipeater mission ACTIVE\r\n");
-                        if (want_ack) Send_Ack(ACK_STATUS_ACCEPTED, cmd.data_id, cmd_seq);
+                        if (want_ack) Send_Ack(ACK_STATUS_ACCEPTED, (uint8_t)cmd.data_id, cmd_seq);
                         app_state = STATE_IDLE_RX;
                         break;
 
@@ -1064,7 +1081,7 @@ int main(void) {
                     }
 
                     default:
-                        uart2_printf("UNKNOWN OPCODE 0x%02X - IGNORING\r\n", cmd.opcode);
+                        uart2_printf("UNKNOWN OPCODE 0x%02X - IGNORING\r\n", cmd.opcode_b1);
                         if (want_ack) Send_Ack(ACK_STATUS_INVALID_COMMAND, DATA_ID_GENERAL, cmd_seq);
                         app_state = STATE_IDLE_RX;
                         break;

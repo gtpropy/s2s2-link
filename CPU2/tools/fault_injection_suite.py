@@ -135,8 +135,14 @@ def modulate(frame: bytes, sample_rate: float = 240000.0, baud: float = 4800.0,
     """Real firmware GMSK modulation (gmsk_demod.gmsk_modulate) at the
     real 4800bps/1200Hz operating point (config.h's RADIO_BIT_RATE_BPS/
     RADIO_FDEV_HZ -- NOT gmsk_demod.py's stale 9600/2400 module
-    defaults), optionally frequency-shifted to simulate Doppler."""
-    iq = gd.gmsk_modulate(frame, sample_rate=sample_rate, baud=baud, fdev=fdev,
+    defaults), optionally frequency-shifted to simulate Doppler.
+
+    G3RUH-scrambles `frame` first -- real hardware always does (see
+    Send_FX25_Frame in ipcc_m0plus_main.c), and fx25_decode_frame always
+    descrambles on the way in, so every caller of modulate() must hand it
+    a plaintext frame and get a signal matching real over-the-air bytes."""
+    scrambled = dec.g3ruh_scramble_frame(frame)
+    iq = gd.gmsk_modulate(scrambled, sample_rate=sample_rate, baud=baud, fdev=fdev,
                            order="msb", invert=False)
     if freq_offset_hz != 0.0:
         n = len(iq)
@@ -195,6 +201,14 @@ def gen_snr_range_tests():
 # =====================================================================
 
 def gen_bitflip_tests():
+    """Corrupts the PLAINTEXT reference frame at known byte positions,
+    then G3RUH-scrambles before handing it to fx25_decode_frame (which
+    always descrambles internally -- see s2s2_decoder.py). Corrupting
+    the already-scrambled bytes directly would spread each hit across a
+    few extra bytes (self-synchronizing LFSR error propagation, ~17
+    bits/2-3 bytes per corrupted bit), defeating this test's exact-
+    t=16-boundary premise -- a real DSP/channel-noise question that's a
+    separate concern from this RS-math boundary check."""
     byte_counts = [0, 1, 2, 4, 6, 8, 10, 12, 14, 16, 17, 18, 20, 24, 28, 32]
     for n_bad in byte_counts:
         def run(n_bad=n_bad):
@@ -207,7 +221,7 @@ def gen_bitflip_tests():
                 while new == orig:
                     new = int(rng.randint(0, 256))
                 frame[i] = new
-            result = dec.fx25_decode_frame(bytes(frame))
+            result = dec.fx25_decode_frame(dec.g3ruh_scramble_frame(bytes(frame)))
             expect_ok = n_bad <= 16  # RS(255,223) t=16 correction strength
             actual_ok = result is not None
             passed = (actual_ok == expect_ok)
@@ -231,7 +245,7 @@ def gen_bitflip_tests():
                     new = int(rng.randint(0, 256))
                 frame[i] = new
                 confidence[i] = 0.0  # tell the decoder exactly which bytes are suspect
-            result = dec.fx25_decode_frame(bytes(frame), confidence)
+            result = dec.fx25_decode_frame(dec.g3ruh_scramble_frame(bytes(frame)), confidence)
             passed = result is not None
             return passed, f"{n_bad} corrupted bytes WITH erasure hints: {'decoded' if passed else 'FAILED to decode'}"
         yield ("bitflip_erasure", f"{n_bad} corruptions with confidence-guided erasure hints", run)
@@ -300,7 +314,7 @@ def gen_garbage_rejection_tests():
 
 def gen_reassembly_tests():
     def run_dup():
-        frame = get_reference_frame()
+        frame = dec.g3ruh_scramble_frame(get_reference_frame())
         r = dec.Reassembler()
         status1, _ = r.accept_frame(frame)
         status2, _ = r.accept_frame(frame)  # same frame again -- must be re-decodable, Reassembler has no cross-call dedup itself (that's the caller's job, e.g. RxWorker._mark_seen), just re-verifies determinism
@@ -309,7 +323,7 @@ def gen_reassembly_tests():
     yield ("reassembly", "identical frame re-submitted (determinism check)", run_dup)
 
     def run_fresh_session_resets():
-        frame = get_reference_frame()
+        frame = dec.g3ruh_scramble_frame(get_reference_frame())
         r = dec.Reassembler()
         status1, info1 = r.accept_frame(frame)
         # A genuinely different (seq_num, session_id) must reset cleanly,

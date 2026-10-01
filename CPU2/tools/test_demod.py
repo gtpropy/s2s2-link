@@ -78,7 +78,14 @@ def run_case(label, snr_db, sample_rate):
     frame = build_reference_frame()
     assert len(frame) == dec.FX25_FRAME_LEN
 
-    iq = gd.gmsk_modulate(frame, sample_rate=sample_rate, order="msb", invert=False)
+    # Real firmware always G3RUH-scrambles at the RadioApp_Send choke
+    # point (CPU2/ipcc_m0plus_main.c's Send_FX25_Frame) -- this C harness
+    # only compiles fx25.c/cubus_ax25.c, so scramble here to match what
+    # actually leaves the antenna. fx25_decode_frame() always descrambles
+    # on the way in (see s2s2_decoder.py), so this must stay in lock-step.
+    scrambled = dec.g3ruh_scramble_frame(frame)
+
+    iq = gd.gmsk_modulate(scrambled, sample_rate=sample_rate, order="msb", invert=False)
 
     if snr_db is not None:
         sig_power = np.mean(np.abs(iq) ** 2)
@@ -125,18 +132,29 @@ def run_erasure_wiring_case():
     be for a given SNR (a separate DSP-tuning question)."""
     frame = build_reference_frame()
 
+    # Real hardware always presents G3RUH-scrambled bytes to
+    # fx25_decode_frame (it descrambles internally -- see s2s2_decoder.py).
+    # Corrupt the PLAINTEXT frame at known byte positions first, then
+    # scramble -- since g3ruh_descramble_frame is a deterministic, bit-
+    # exact inverse, this reproduces exactly those 20 corrupted RS
+    # codeword bytes post-descramble. Corrupting the scrambled domain
+    # directly would spread each error across a few extra bytes (self-
+    # synchronizing LFSR error propagation, ~17 bits/2-3 bytes per hit),
+    # defeating this test's "known controlled set" premise -- a real DSP/
+    # channel-noise question that's explicitly out of scope here (see
+    # docstring above).
     rng = np.random.RandomState(7)
-    bad_frame = bytearray(frame)
+    bad_plain = bytearray(frame)
     confidence = [1.0] * dec.FX25_FRAME_LEN
     corrupt_idx = rng.choice(range(dec.FX25_TAG_LEN, dec.FX25_FRAME_LEN), size=20, replace=False)
     for idx in corrupt_idx:
-        orig = bad_frame[idx]
+        orig = bad_plain[idx]
         new = orig
         while new == orig:
             new = int(rng.randint(0, 256))
-        bad_frame[idx] = new
+        bad_plain[idx] = new
         confidence[idx] = 0.0
-    bad_frame = bytes(bad_frame)
+    bad_frame = dec.g3ruh_scramble_frame(bytes(bad_plain))
 
     plain_result = dec.fx25_decode_frame(bad_frame)
     assert plain_result is None, "erasure-wiring case: plain decode should have failed past RS_T=16"

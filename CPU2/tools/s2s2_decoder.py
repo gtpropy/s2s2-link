@@ -400,6 +400,57 @@ def _get_bit(buf, bitpos):
     return (buf[bitpos >> 3] >> (bitpos & 7)) & 1
 
 
+def _reverse8(v: int) -> int:
+    v = ((v & 0xF0) >> 4) | ((v & 0x0F) << 4)
+    v = ((v & 0xCC) >> 2) | ((v & 0x33) << 2)
+    v = ((v & 0xAA) >> 1) | ((v & 0x55) << 1)
+    return v
+
+
+def g3ruh_scramble_frame(frame: bytes) -> bytes:
+    """Python port of CPU2/core/Src/g3ruh.c's g3ruh_scramble_frame --
+    bit-exact with Direwolf's gen_tone.c scrambler (self-synchronizing,
+    17-bit LFSR, taps at bit 16/11) plus NRZI encode, then a per-byte
+    bit-reversal to compensate the SX126x packet engine's native
+    MSB-first shift-out (see g3ruh.h). Used to build synthetic on-air
+    test signals (test_demod.py) matching what the real firmware now
+    transmits -- g3ruh_descramble_frame is the RX-side inverse, wired
+    into fx25_decode_frame below since real hardware always scrambles."""
+    n = len(frame)
+    lfsr = 0
+    nrzi_prev = 1
+    scratch = bytearray(n)
+    for bitpos in range(n * 8):
+        byte_idx, bit_idx = divmod(bitpos, 8)
+        data_bit = (frame[byte_idx] >> bit_idx) & 1
+        nrzi_bit = nrzi_prev if data_bit else (1 - nrzi_prev)
+        nrzi_prev = nrzi_bit
+        x = (nrzi_bit ^ (lfsr >> 16) ^ (lfsr >> 11)) & 1
+        lfsr = ((lfsr << 1) | x) & 0xFFFFFFFF
+        if x:
+            scratch[byte_idx] |= 1 << bit_idx
+    return bytes(_reverse8(b) for b in scratch)
+
+
+def g3ruh_descramble_frame(frame: bytes) -> bytes:
+    """Exact inverse of g3ruh_scramble_frame -- see there."""
+    n = len(frame)
+    scratch = bytes(_reverse8(b) for b in frame)
+    lfsr = 0
+    prev_descram = 1
+    out = bytearray(n)
+    for bitpos in range(n * 8):
+        byte_idx, bit_idx = divmod(bitpos, 8)
+        raw = (scratch[byte_idx] >> bit_idx) & 1
+        descram = (raw ^ (lfsr >> 16) ^ (lfsr >> 11)) & 1
+        lfsr = ((lfsr << 1) | raw) & 0xFFFFFFFF
+        dbit = 1 if descram == prev_descram else 0
+        prev_descram = descram
+        if dbit:
+            out[byte_idx] |= 1 << bit_idx
+    return bytes(out)
+
+
 def fx25_unpack_data_field(data: bytes):
     """Destuff a FX25_DATA_LEN-byte data field back to AX.25 frame bytes
     (with FCS, no flags). Returns bytes, or None if no valid flag pair."""
@@ -488,6 +539,7 @@ def fx25_decode_frame(frame168: bytes, confidence=None, max_erasures: int = 24):
     rs_decode(codeword) and this always tries both."""
     if len(frame168) != FX25_FRAME_LEN:
         return None
+    frame168 = g3ruh_descramble_frame(frame168)
     if not fx25_tag_matches(frame168[:FX25_TAG_LEN]):
         return None
 
