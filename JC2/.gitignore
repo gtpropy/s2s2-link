@@ -13,6 +13,7 @@ Inc/secrets.h
 
 # Written by ../setup.sh -- machine-specific, regenerated per machine
 .toolchain_path
+.auth_tag
 compile_flags.txt
 tools/.venv/
 tools/mission_control.db

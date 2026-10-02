@@ -44,6 +44,25 @@ endif
 
 APP ?= satellite
 
+# AUTH=TRUE (default) or AUTH=FALSE -- toggles whether the light FEC
+# wrap's keyed tag + replay counter (Mission/protocol.c) are computed/
+# checked at all. The FEC/correction half stays on regardless; this is
+# for bench testing against a peer that doesn't share the key yet.
+AUTH ?= TRUE
+ifeq ($(AUTH),FALSE)
+  AUTH_DEFINE = -DAUTH_ENABLE=0
+else
+  AUTH_DEFINE = -DAUTH_ENABLE=1
+endif
+
+# Object files don't encode AUTH in their names, so switching AUTH=TRUE
+# <-> AUTH=FALSE without this would silently keep stale .o files built
+# under the old setting. .auth_tag records the last value used and
+# forces a clean rebuild whenever it changes.
+ifneq ($(AUTH),$(shell cat .auth_tag 2>/dev/null))
+  $(shell find . -path "./V1.4" -prune -o -type f -name "*.o" -exec rm -f {} + ; echo $(AUTH) > .auth_tag)
+endif
+
 ifeq ($(APP),gs)
   MAIN_SRC = Main_code/Main_GS/gs_main.c
   TARGET   = gs
@@ -99,6 +118,7 @@ CFLAGS = $(CPU) \
          -DUSE_HAL_DRIVER \
          -DSTM32WL55xx \
          -DCORE_CM0PLUS \
+         $(AUTH_DEFINE) \
          -I. \
          -IMain_code/Main_Satellite \
          -IInc \

@@ -24,15 +24,22 @@
 #define SAT_LISTEN_DURATION_MS (30UL * 60UL * 1000UL)
 #endif
 
-static char cwBeaconlive_msg1[64];
-static char cwBeaconlive_msg2[64];
+static char cwBeaconlive_msg1[CW_BEACON_HEX_LEN + 1];
+static char cwBeaconlive_msg2[CW_BEACON_HEX_LEN + 1];
 
 /*
  * ============================================================================
  * HELPER: DRAIN TELEMETRY PACKETS FROM M4 VIA SHARED SRAM2 RING BUFFER
+ *
+ * *_valid starts false and only ever becomes true once CPU1 has actually
+ * sent a real packet for that beacon -- no fabricated "looks plausible"
+ * defaults are substituted when the ring buffer is empty (it used to be
+ * seeded with hardcoded 4.00V/25.0C/1.00A values that would transmit
+ * forever if CPU1 never sent anything at all). Beacon/CW builders zero
+ * the corresponding fields instead until real data exists.
  * ============================================================================
  */
-static void M0_Drain_Telemetry(int16_t b1[5], int16_t b2[5])
+static void M0_Drain_Telemetry(int16_t b1[5], bool *b1_valid, int16_t b2[5], bool *b2_valid)
 {
     struct tx_packet_s pkt;
 
@@ -52,6 +59,7 @@ static void M0_Drain_Telemetry(int16_t b1[5], int16_t b2[5])
                 b1[2] = pkt.data[2];
                 b1[3] = pkt.data[3];
                 b1[4] = pkt.data[4];
+                *b1_valid = true;
                 uart1_printf("[M0+ IPC] Received B1: %d.%02dV %d.%02dV %d.%dC %d.%dC %d.%dC\r\n",
                              b1[0] / 100, (int)ABS(b1[0] % 100),
                              b1[1] / 100, (int)ABS(b1[1] % 100),
@@ -66,6 +74,7 @@ static void M0_Drain_Telemetry(int16_t b1[5], int16_t b2[5])
                 b2[2] = pkt.data[2];
                 b2[3] = pkt.data[3];
                 b2[4] = pkt.data[4];
+                *b2_valid = true;
                 uart1_printf("[M0+ IPC] Received B2: %d.%02dA %d.%02dA %d.%02dA %d %d\r\n",
                              b2[0] / 100, (int)ABS(b2[0] % 100),
                              b2[1] / 100, (int)ABS(b2[1] % 100),
@@ -116,7 +125,8 @@ static void M0_Check_And_Forward_Command(void)
  * - Emits periodic status heartbeats so ground/test operator sees countdown.
  * ============================================================================
  */
-static void M0_Listening_Delay(uint32_t delay_ms, int16_t b1[5], int16_t b2[5])
+static void M0_Listening_Delay(uint32_t delay_ms, int16_t b1[5], bool *b1_valid,
+                                int16_t b2[5], bool *b2_valid)
 {
     RadioApp_StartRx();
     uart1_printf("\r\n>>> [M0+] ENTERING RX LISTEN MODE (Duration: %lu min %lu s) <<<\r\n",
@@ -131,7 +141,7 @@ static void M0_Listening_Delay(uint32_t delay_ms, int16_t b1[5], int16_t b2[5])
     while (remaining > 0)
     {
         M0_Check_And_Forward_Command();
-        M0_Drain_Telemetry(b1, b2);
+        M0_Drain_Telemetry(b1, b1_valid, b2, b2_valid);
 
         uint32_t step = (remaining > chunk_ms) ? chunk_ms : remaining;
         CPU2_Delay_Ms(step);
@@ -182,9 +192,12 @@ int main(void) {
 
     uint32_t cycle = 0;
 
-    /* Default initial values (used if M4 hasn't populated ring buffer yet) */
-    int16_t b1_data[5] = { 400, 400, 250, 250, 250 }; /* 4.00V, 4.00V, 25.0C, 25.0C, 25.0C */
-    int16_t b2_data[5] = { 100, 100, 100, 1, 2 };     /* 1.00A, 1.00A, 1.00A, Flag1=1, Flag2=2 */
+    /* No real telemetry has arrived from CPU1 yet -- zeroed, not a
+       plausible-looking fabricated reading (see M0_Drain_Telemetry). */
+    int16_t b1_data[5] = { 0, 0, 0, 0, 0 };
+    int16_t b2_data[5] = { 0, 0, 0, 0, 0 };
+    bool b1_valid = false;
+    bool b2_valid = false;
 
     /* Arm radio in RX listening mode immediately */
     RadioApp_StartRx();
@@ -199,20 +212,18 @@ int main(void) {
         cycle++;
 
         /* 1. Update latest telemetry from M4 shared ring buffer */
-        M0_Drain_Telemetry(b1_data, b2_data);
+        M0_Drain_Telemetry(b1_data, &b1_valid, b2_data, &b2_valid);
         M0_Check_And_Forward_Command();
 
-        /* 2. Format and Transmit COMPLETE CW1 (Voltage + Temperature) */
-        snprintf(cwBeaconlive_msg1, sizeof(cwBeaconlive_msg1),
-                 "%d.%02dV %d.%02dV %d.%dC %d.%dC %d.%dC",
-                 b1_data[0] / 100, (int)ABS(b1_data[0] % 100),
-                 b1_data[1] / 100, (int)ABS(b1_data[1] % 100),
-                 b1_data[2] / 10,  (int)ABS(b1_data[2] % 10),
-                 b1_data[3] / 10,  (int)ABS(b1_data[3] % 10),
-                 b1_data[4] / 10,  (int)ABS(b1_data[4] % 10));
+        /* 2. Build + send Beacon1/Beacon2 (AX.25, sheet-compliant) and the
+           CW1 hex string (Morse, bit-packed per Sheet4) from the same
+           real/zeroed telemetry -- see Satellite_BuildAndSendTelemetry. */
+        Satellite_BuildAndSendTelemetry(b1_data, b1_valid, b2_data, b2_valid,
+                                         cwBeaconlive_msg1, cwBeaconlive_msg2);
 
-        uart1_printf("\r\n>>> [CYCLE #%lu] TRANSMITTING COMPLETE CW1: \"%s\" <<<\r\n",
-                     (unsigned long)cycle, cwBeaconlive_msg1);
+        uart1_printf("\r\n>>> [CYCLE #%lu] TRANSMITTING CW1: \"%s\"%s <<<\r\n",
+                     (unsigned long)cycle, cwBeaconlive_msg1,
+                     (b1_valid || b2_valid) ? "" : " (no real telemetry yet)");
         Satellite_Send_CW_Beacon(cycle,
                                  "CW1",
                                  cfg->cwBeaconCallsign,
@@ -224,23 +235,19 @@ int main(void) {
 
         /* 3. Listen RX after CW1 (30 Minutes) */
         uart1_puts(">>> [M0+] ENTERING RX LISTEN MODE AFTER CW1 <<<\r\n");
-        M0_Listening_Delay(SAT_LISTEN_DURATION_MS, b1_data, b2_data);
+        M0_Listening_Delay(SAT_LISTEN_DURATION_MS, b1_data, &b1_valid, b2_data, &b2_valid);
 
         /* 4. Update latest telemetry from M4 shared ring buffer */
-        M0_Drain_Telemetry(b1_data, b2_data);
+        M0_Drain_Telemetry(b1_data, &b1_valid, b2_data, &b2_valid);
         M0_Check_And_Forward_Command();
 
-        /* 5. Format and Transmit COMPLETE CW2 (Currents + Status Flags) */
-        snprintf(cwBeaconlive_msg2, sizeof(cwBeaconlive_msg2),
-                 "%d.%02dA %d.%02dA %d.%02dA %d %d",
-                 b2_data[0] / 100, (int)ABS(b2_data[0] % 100),
-                 b2_data[1] / 100, (int)ABS(b2_data[1] % 100),
-                 b2_data[2] / 100, (int)ABS(b2_data[2] % 100),
-                 (int)b2_data[3],
-                 (int)b2_data[4]);
+        /* 5. Refresh Beacon1/Beacon2 + CW2 hex string with the latest data */
+        Satellite_BuildAndSendTelemetry(b1_data, b1_valid, b2_data, b2_valid,
+                                         cwBeaconlive_msg1, cwBeaconlive_msg2);
 
-        uart1_printf("\r\n>>> [CYCLE #%lu] TRANSMITTING COMPLETE CW2: \"%s\" <<<\r\n",
-                     (unsigned long)cycle, cwBeaconlive_msg2);
+        uart1_printf("\r\n>>> [CYCLE #%lu] TRANSMITTING CW2: \"%s\"%s <<<\r\n",
+                     (unsigned long)cycle, cwBeaconlive_msg2,
+                     (b1_valid || b2_valid) ? "" : " (no real telemetry yet)");
         Satellite_Send_CW_Beacon(cycle,
                                  "CW2",
                                  cfg->cwBeaconCallsign,
@@ -252,7 +259,7 @@ int main(void) {
 
         /* 6. Listen RX after CW2 (30 Minutes) */
         uart1_puts(">>> [M0+] ENTERING RX LISTEN MODE AFTER CW2 <<<\r\n");
-        M0_Listening_Delay(SAT_LISTEN_DURATION_MS, b1_data, b2_data);
+        M0_Listening_Delay(SAT_LISTEN_DURATION_MS, b1_data, &b1_valid, b2_data, &b2_valid);
     }
 
     return 0;

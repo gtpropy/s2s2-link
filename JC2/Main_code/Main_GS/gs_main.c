@@ -498,12 +498,46 @@ static uint32_t Get_Time_Ms(void)
     return g_system_tick_ms;
 }
 
-/* opcode/subsystem/data_id in one small payload -- a lightweight stand-in
-   for the old project's richer command struct, sent through the same
-   Protocol_CreatePacket path (burst of 3, same as Send_Command below). */
+/* Packs the full 13-byte sheet-compliant command (SAT-ID + MCU-ID + 3
+   opcode bytes + DATA_ID(2) + ADDRESS(4) + NUM_PACKETS(2)) and sends it
+   through Protocol_CreatePacket -- the light FEC wrap + (if AUTH_ENABLE)
+   keyed tag/replay counter are applied transparently there, same as any
+   other payload, so this struct carries no counter/MAC of its own.
+   address/num_packets are only meaningful for CMD_DOWNLOAD_FILE; none of
+   the fixed console commands below supply a real target yet, so they
+   stay 0 (TODO once a real file table exists on the satellite side). */
+static void command_pack(const CommandPacket_t *cmd, uint8_t out[COMMAND_PAYLOAD_LEN])
+{
+    out[0] = SAT_ID_S2S2;
+    out[1] = cmd->mcu_id;
+    out[2] = cmd->opcode_b1;
+    if (cmd->opcode_b1 == CMD_RUN_CAMERA) {
+        out[3] = 0x5E;
+        out[4] = 0xBD;
+    } else if (cmd->opcode_b1 == CMD_DOWNLOAD_FILE) {
+        out[3] = 0xD1;
+        out[4] = cmd->opcode_b3;
+    } else {
+        out[3] = cmd->opcode_b2;
+        out[4] = cmd->opcode_b3;
+    }
+    out[5] = (uint8_t)(cmd->data_id >> 8); out[6] = (uint8_t)cmd->data_id;
+    out[7] = (uint8_t)(cmd->address >> 24); out[8] = (uint8_t)(cmd->address >> 16);
+    out[9] = (uint8_t)(cmd->address >> 8);  out[10] = (uint8_t)cmd->address;
+    out[11] = (uint8_t)(cmd->num_packets >> 8); out[12] = (uint8_t)cmd->num_packets;
+}
+
 static void Send_Command_Ex(uint8_t opcode, uint8_t subsystem, uint8_t data_id)
 {
-    uint8_t payload[3] = { opcode, subsystem, data_id };
+    CommandPacket_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.mcu_id = subsystem;
+    cmd.opcode_b1 = opcode;
+    cmd.data_id = data_id;
+
+    uint8_t payload[COMMAND_PAYLOAD_LEN];
+    command_pack(&cmd, payload);
+
     uint8_t frame[AX25_MAX_FRAME_SIZE];
 
     uint16_t frame_len = Protocol_CreatePacket(frame, payload, sizeof(payload), &GroundStationProfile);
@@ -513,8 +547,8 @@ static void Send_Command_Ex(uint8_t opcode, uint8_t subsystem, uint8_t data_id)
         return;
     }
 
-    uart2_printf("\r\nTX COMMAND 0x%02X sub=0x%02X data=0x%02X (burst of 3 packets)\r\n",
-                 opcode, subsystem, data_id);
+    uart2_printf("\r\nTX COMMAND sat=0x%02X mcu=0x%02X opcode=0x%02X 0x%02X 0x%02X data=0x%04X (burst of 3 packets)\r\n",
+                 payload[0], payload[1], payload[2], payload[3], payload[4], cmd.data_id);
 
     for (int i = 0; i < 3; i++)
     {

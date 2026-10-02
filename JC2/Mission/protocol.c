@@ -552,10 +552,12 @@ uint16_t Protocol_CreatePacket(
     s_rsReal[4] = (uint8_t)payloadLength;
     memcpy(&s_rsReal[PROTO_WRAP_HDR_LEN], payload, payloadLength);
 
+#if AUTH_ENABLE
     uint64_t mac = computeTag(s_protoKey, s_rsReal, PROTO_WRAP_BLOCK_LEN);
     for (uint32_t i = 0; i < PROTO_TAG_LEN; i++) {
         s_rsReal[PROTO_WRAP_BLOCK_LEN + i] = (uint8_t)(mac >> (8U * i));
     }
+#endif
 
     static uint8_t s_wirePayload[PROTO_WIRE_LEN];
     memcpy(s_wirePayload, s_rsReal, PROTO_SEALED_LEN);
@@ -1282,8 +1284,9 @@ bool Protocol_DecodePayload(
     if (sealDecode(s_rxBlock) < 0) return false;
 
     const uint8_t *wrapped = s_rxBlock;
-    const uint8_t *mac = &s_rxBlock[PROTO_WRAP_BLOCK_LEN];
 
+#if AUTH_ENABLE
+    const uint8_t *mac = &s_rxBlock[PROTO_WRAP_BLOCK_LEN];
     uint64_t expectedTag = computeTag(s_protoKey, wrapped, PROTO_WRAP_BLOCK_LEN);
     for (uint32_t i = 0; i < PROTO_TAG_LEN; i++) {
         if (mac[i] != (uint8_t)(expectedTag >> (8U * i))) return false;
@@ -1294,6 +1297,7 @@ bool Protocol_DecodePayload(
         ((uint32_t)wrapped[2] << 8) | (uint32_t)wrapped[3];
     if (counter <= s_protoRxFloor) return false;
     s_protoRxFloor = counter;
+#endif
 
     uint8_t realLen = wrapped[4];
     if (realLen > PROTO_MAX_PAYLOAD_LEN || realLen > payloadOutMax) return false;

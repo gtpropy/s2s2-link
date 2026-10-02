@@ -24,6 +24,25 @@
 
 /* USER CODE BEGIN Includes */
 
+/* Direct BSRR register writes instead of HAL_GPIO_WritePin -- this file is
+   the one place in the whole firmware where GPIO toggle latency actually
+   matters (TX/RX RF switch + PA enable sequencing, the exact timing this
+   file's own fixes are about -- see RF_FRONTEND_AND_TIMING_REPORT.md).
+   BSRR is a single atomic store (set bits in the low 16, reset bits in
+   the high 16), same electrical effect as HAL_GPIO_WritePin, no
+   assert_param/branch overhead. Pin arguments are always compile-time
+   constants at every call site, so these always_inline to exactly one
+   STR instruction each -- not a real function call. */
+__attribute__((always_inline)) static inline void GpioSet(GPIO_TypeDef *port, uint32_t pin) {
+    port->BSRR = pin;
+}
+__attribute__((always_inline)) static inline void GpioReset(GPIO_TypeDef *port, uint32_t pin) {
+    port->BSRR = pin << 16U;
+}
+__attribute__((always_inline)) static inline uint8_t GpioIsSet(GPIO_TypeDef *port, uint32_t pin) {
+    return (port->IDR & pin) != 0U;
+}
+
 /* USER CODE END Includes */
 
 /* External variables ---------------------------------------------------------*/
@@ -66,17 +85,9 @@ void RBI_EnablePA(uint8_t enable)
     if (!s_pa_enabled)
     {
         /* Global PA & 5V DC/DC OFF */
-        HAL_GPIO_WritePin(AMP_3V3_EN_PORT,
-                          AMP_3V3_EN_PIN,
-                          GPIO_PIN_RESET);
-
-        HAL_GPIO_WritePin(AMP_5V_EN_PORT,
-                          AMP_5V_EN_PIN,
-                          GPIO_PIN_RESET);
-
-        HAL_GPIO_WritePin(DCDC_5V_EN_PORT,
-                          DCDC_5V_EN_PIN,
-                          GPIO_PIN_RESET);
+        GpioReset(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN);
+        GpioReset(AMP_5V_EN_PORT, AMP_5V_EN_PIN);
+        GpioReset(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN);
     }
 }
 
@@ -87,9 +98,8 @@ uint8_t RBI_IsPAEnabled(void)
 
 void RBI_Enable5VDCDC(uint8_t enable)
 {
-    HAL_GPIO_WritePin(DCDC_5V_EN_PORT,
-                      DCDC_5V_EN_PIN,
-                      enable ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    if (enable) GpioSet(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN);
+    else GpioReset(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN);
 }
 
 void RBI_SetTxSwitchConfig(RBI_Switch_TypeDef config)
@@ -128,8 +138,8 @@ int32_t RBI_Init(void)
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
     /* Default: All OFF (PA0=0, PC2=0, PC3=0, PC4=0, PC5=0) */
-    HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOC, AMP_3V3_EN_PIN | AMP_5V_EN_PIN | FE_CTRL1_PIN | FE_CTRL2_PIN, GPIO_PIN_RESET);
+    GpioReset(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN);
+    GpioReset(GPIOC, AMP_3V3_EN_PIN | AMP_5V_EN_PIN | FE_CTRL1_PIN | FE_CTRL2_PIN);
 
     return 0;
 }
@@ -137,10 +147,10 @@ int32_t RBI_Init(void)
 int32_t RBI_DeInit(void)
 {
     /* Safe shutdown: deassert all controls */
-    HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
+    GpioReset(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN);
     HAL_GPIO_DeInit(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN);
 
-    HAL_GPIO_WritePin(GPIOC, AMP_3V3_EN_PIN | AMP_5V_EN_PIN | FE_CTRL1_PIN | FE_CTRL2_PIN, GPIO_PIN_RESET);
+    GpioReset(GPIOC, AMP_3V3_EN_PIN | AMP_5V_EN_PIN | FE_CTRL1_PIN | FE_CTRL2_PIN);
     HAL_GPIO_DeInit(GPIOC, AMP_3V3_EN_PIN | AMP_5V_EN_PIN | FE_CTRL1_PIN | FE_CTRL2_PIN);
 
     return 0;
@@ -168,7 +178,7 @@ int32_t RBI_ConfigRFSwitch(RBI_Switch_TypeDef Config)
     {
     case RBI_SWITCH_RFO_LP5V:
         /*
-         * TRANSMIT MODE (5V PA for GMSK):
+         * TRANSMIT MODE (5V PA for GFSK):
          * 1. Disable 3.3V External PA (PC2 / SO2 = 0) - Prevents dual-PA power overload & brownout
          * 2. Enable 5V DC/DC Converter (PA0 = 1) - Power rail for 5V PA
          * 3. DC/DC rail ramp-up settle delay (~5 ms)
@@ -176,23 +186,23 @@ int32_t RBI_ConfigRFSwitch(RBI_Switch_TypeDef Config)
          * 5. Assert 5V External PA (PC3 / SI2 = 1) - 5V power amplifier active
          * 6. PA bias network & switch settle delay (~1 ms)
          */
-        if (HAL_GPIO_ReadPin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN) != GPIO_PIN_SET)
+        if (!GpioIsSet(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN))
         {
-            HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_SET);
+            GpioSet(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN);
             /* DC/DC 5V voltage boost initial capacitor ramp settle (~5 ms at 48 MHz) */
             for (volatile uint32_t i = 0; i < 60000; i++) { __NOP(); }
         }
 
-        HAL_GPIO_WritePin(FE_CTRL1_PORT, FE_CTRL1_PIN, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(FE_CTRL2_PORT, FE_CTRL2_PIN, GPIO_PIN_SET);
+        GpioReset(FE_CTRL1_PORT, FE_CTRL1_PIN);
+        GpioSet(FE_CTRL2_PORT, FE_CTRL2_PIN);
 
         if (s_pa_enabled)
         {
-            HAL_GPIO_WritePin(AMP_5V_EN_PORT, AMP_5V_EN_PIN, GPIO_PIN_SET);
+            GpioSet(AMP_5V_EN_PORT, AMP_5V_EN_PIN);
         }
         else
         {
-            HAL_GPIO_WritePin(AMP_5V_EN_PORT, AMP_5V_EN_PIN, GPIO_PIN_RESET);
+            GpioReset(AMP_5V_EN_PORT, AMP_5V_EN_PIN);
         }
 
         /* PA bias & RF switch settle delay (~1 ms at 48 MHz) */
@@ -203,26 +213,26 @@ int32_t RBI_ConfigRFSwitch(RBI_Switch_TypeDef Config)
     case RBI_SWITCH_RFO_LP:
         /*
          * TRANSMIT MODE (3.3V PA for CW):
-         * 1. Ensure 5V DC/DC is OFF (PA0 = 0) - ONLY ON while GMSK send
+         * 1. Ensure 5V DC/DC is OFF (PA0 = 0) - ONLY ON while GFSK send
          * 2. Disable 5V External PA (PC3 / SI2 = 0)
          * 3. RF Switch -> TX Path (FE_CTRL1 = 0, FE_CTRL2 = 1)
          * 4. Assert 3.3V External Power Amplifier Enable (PC2 / SO2 = 1)
          * 5. PA bias network & switch settle delay (~200 us)
          */
         s_tx_switch_config = RBI_SWITCH_RFO_LP;
-        HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(AMP_5V_EN_PORT, AMP_5V_EN_PIN, GPIO_PIN_RESET);
+        GpioReset(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN);
+        GpioReset(AMP_5V_EN_PORT, AMP_5V_EN_PIN);
 
-        HAL_GPIO_WritePin(FE_CTRL1_PORT, FE_CTRL1_PIN, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(FE_CTRL2_PORT, FE_CTRL2_PIN, GPIO_PIN_SET);
+        GpioReset(FE_CTRL1_PORT, FE_CTRL1_PIN);
+        GpioSet(FE_CTRL2_PORT, FE_CTRL2_PIN);
 
         if (s_pa_enabled)
         {
-            HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, GPIO_PIN_SET);
+            GpioSet(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN);
         }
         else
         {
-            HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, GPIO_PIN_RESET);
+            GpioReset(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN);
         }
 
         /* PA bias & RF switch settle delay (~200 us at 48 MHz) */
@@ -237,11 +247,11 @@ int32_t RBI_ConfigRFSwitch(RBI_Switch_TypeDef Config)
          * 3. Disable 3.3V External PA (PC2 = 0)
          * 4. RF Switch -> RX Path (FE_CTRL1 = 1, FE_CTRL2 = 0)
          */
-        HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(AMP_5V_EN_PORT, AMP_5V_EN_PIN, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(FE_CTRL1_PORT, FE_CTRL1_PIN, GPIO_PIN_SET);
-        HAL_GPIO_WritePin(FE_CTRL2_PORT, FE_CTRL2_PIN, GPIO_PIN_RESET);
+        GpioReset(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN);
+        GpioReset(AMP_5V_EN_PORT, AMP_5V_EN_PIN);
+        GpioReset(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN);
+        GpioSet(FE_CTRL1_PORT, FE_CTRL1_PIN);
+        GpioReset(FE_CTRL2_PORT, FE_CTRL2_PIN);
 
         /* Settle delay (~50 us) */
         for (volatile uint32_t i = 0; i < 500; i++) { __NOP(); }
@@ -253,11 +263,11 @@ int32_t RBI_ConfigRFSwitch(RBI_Switch_TypeDef Config)
          * STANDBY / OFF:
          * Deassert 5V DC/DC, 5V PA, 3.3V PA, and both RF switch control pins
          */
-        HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(AMP_5V_EN_PORT, AMP_5V_EN_PIN, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(FE_CTRL1_PORT, FE_CTRL1_PIN, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(FE_CTRL2_PORT, FE_CTRL2_PIN, GPIO_PIN_RESET);
+        GpioReset(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN);
+        GpioReset(AMP_5V_EN_PORT, AMP_5V_EN_PIN);
+        GpioReset(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN);
+        GpioReset(FE_CTRL1_PORT, FE_CTRL1_PIN);
+        GpioReset(FE_CTRL2_PORT, FE_CTRL2_PIN);
         break;
     }
 
