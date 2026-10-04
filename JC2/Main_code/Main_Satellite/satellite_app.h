@@ -20,9 +20,20 @@ extern "C" {
  * ============================================================================
  */
 
-/* 1. Radio Frequency & Profile Defaults */
-#define SAT_CFG_DEFAULT_TX_FREQ_HZ         DEFAULT_TX_FREQUENCY_HZ /* 868.000 MHz Downlink (JC1) */
-#define SAT_CFG_DEFAULT_RX_FREQ_HZ         DEFAULT_RX_FREQUENCY_HZ /* 868.000 MHz Uplink (JC1) */
+/* 1. Radio Frequency & Profile Defaults
+ *
+ * DEFAULT_TX_FREQUENCY_HZ/DEFAULT_RX_FREQUENCY_HZ (Mission/config.h) are
+ * named from the ground station's side (GS TX=437.375/RX=435.000, its
+ * own documented frequency plan) -- the satellite needs the opposite
+ * pairing (satellite TX=435.000=GS's RX, satellite RX=437.375=GS's TX).
+ * This used to assign them straight (TX_FREQ_HZ=DEFAULT_TX_FREQUENCY_HZ),
+ * which put the satellite's TX on 437.375 and RX on 435.000 -- backwards
+ * from config.h's own documented plan, on top of GroundStationProfile
+ * (gs_main.c) separately hardcoding 868 MHz for both ends. Together
+ * those two bugs meant neither side agreed on a real frequency at all.
+ */
+#define SAT_CFG_DEFAULT_TX_FREQ_HZ         DEFAULT_RX_FREQUENCY_HZ /* 435.000 MHz satellite downlink */
+#define SAT_CFG_DEFAULT_RX_FREQ_HZ         DEFAULT_TX_FREQUENCY_HZ /* 437.375 MHz satellite uplink */
 #define SAT_CFG_DEFAULT_SRC_CALLSIGN       "9NS2S2"
 #define SAT_CFG_DEFAULT_SRC_SSID           1
 #define SAT_CFG_DEFAULT_DEST_CALLSIGN      "GROUND"
@@ -231,18 +242,9 @@ void     Satellite_GFSK_Prepare(void);
 uint32_t Satellite_GetTotalPacketsSent(void);
 void     IPCC_Handshake(void);
 
-/* 8b. Beacon1/2 (AX.25 downlink) + CW1/2 (Morse hex) -- Packet Format
-   sheet-compliant telemetry, see Mission/config.h for the structs. */
-bool Satellite_Send_Beacon1(const Beacon1Packet_t *b);
-bool Satellite_Send_Beacon2(const Beacon2Packet_t *b);
-bool Satellite_Send_Ack(const AckPacket_t *ack);
-int  Camera_Fragment_Pack(const CameraFragment_t *frag, uint8_t *out);
-void Satellite_BuildCw1Hex(const CwBeacon1_t *b, char out[CW_BEACON_HEX_LEN + 1]);
-void Satellite_BuildCw2Hex(const CwBeacon2_t *b, char out[CW_BEACON_HEX_LEN + 1]);
-void Satellite_BuildAndSendTelemetry(const int16_t b1_data[5], bool b1_valid,
-                                      const int16_t b2_data[5], bool b2_valid,
-                                      char cw1_hex_out[CW_BEACON_HEX_LEN + 1],
-                                      char cw2_hex_out[CW_BEACON_HEX_LEN + 1]);
+/* 8b. Beacon1/2/CW1/2/ACK/Camera-fragment packing + send now live in
+   satellite_main.c (the file that owns the IPC ring-buffer structs
+   they pack from) -- see Mission/config.h for the struct definitions. */
 
 /* 9. Uplink Radio Receive Buffers and Flags */
 extern volatile uint8_t rx_frame_buffer[AX25_MAX_FRAME_SIZE];

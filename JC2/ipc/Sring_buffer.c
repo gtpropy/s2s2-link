@@ -91,9 +91,8 @@ bool rb_tx_full(void)
 
 /* M4 side. seq increments on EVERY call (even if the ring is full),
  * so gaps in seq on the M0+ side reveal dropped packets. */
-bool live_telem_update_float(uint16_t beacon_id,
-                             int16_t d1, int16_t d2, int16_t d3,
-                             int16_t d4, int16_t d5)
+static bool live_telem_update(uint16_t beacon_id, const void *payload,
+                              size_t payload_len)
 {
   static uint16_t s_seq = 0;
   uint16_t seq = s_seq++;
@@ -104,15 +103,12 @@ bool live_telem_update_float(uint16_t beacon_id,
     }
 
   struct tx_packet_s p;
-  p.data[0] = d1;
-  p.data[1] = d2;
-  p.data[2] = d3;
-  p.data[3] = d4;
-  p.data[4] = d5;
-  p.id      = beacon_id;
-  p.seq     = seq;
-  p.crc16   = rb_calc_crc16((const uint8_t *)&p,
-                            offsetof(struct tx_packet_s, crc16));
+  memset(&p, 0, sizeof(p));
+  memcpy(&p.payload, payload, payload_len);
+  p.id    = beacon_id;
+  p.seq   = seq;
+  p.crc16 = rb_calc_crc16((const uint8_t *)&p,
+                         offsetof(struct tx_packet_s, crc16));
 
   uint32_t idx = SHARED_RING_TX->write_index % RING_TX_DEPTH;
   memcpy((void *)&SHARED_RING_TX->slots[idx], &p, sizeof(p));
@@ -125,6 +121,16 @@ bool live_telem_update_float(uint16_t beacon_id,
 
   ipcc_m4_send(IPCC_CH_BEACON);   /* notify M0+ */
   return true;
+}
+
+bool live_telem_update_b1(const struct beacon1_ipc_s *b1)
+{
+  return b1 && live_telem_update(TELEM_ID_B1, b1, sizeof(*b1));
+}
+
+bool live_telem_update_b2(const struct beacon2_ipc_s *b2)
+{
+  return b2 && live_telem_update(TELEM_ID_B2, b2, sizeof(*b2));
 }
 
 /* M0+ side. Reads one slot and always consumes it.
@@ -149,14 +155,19 @@ bool rb_tx_read(struct tx_packet_s *pkt)
                        offsetof(struct tx_packet_s, crc16)) == pkt->crc16;
 }
 
-/* M0+ side. Drain everything, keep the newest valid packet. */
-bool live_telem_get_float(uint16_t *id,
-                          int16_t *d1, int16_t *d2, int16_t *d3,
-                          int16_t *d4, int16_t *d5)
+/* M0+ side. Single pass over the ring, keeping the newest valid packet
+ * of EACH kind -- a per-id drain (read until empty, filtering on id)
+ * would have to walk the whole ring once per id and the first walk
+ * empties it, starving the second, so both outputs are filled from one
+ * shared walk instead. got_b1 and got_b2 stay false (output untouched)
+ * if no packet of that kind showed up this pass. */
+bool live_telem_drain_all(struct beacon1_ipc_s *b1_out, bool *got_b1,
+                          struct beacon2_ipc_s *b2_out, bool *got_b2)
 {
   struct tx_packet_s pkt;
-  struct tx_packet_s last;
-  bool got = false;
+
+  if (got_b1) { *got_b1 = false; }
+  if (got_b2) { *got_b2 = false; }
 
   if (ipcc_m0_received(IPCC_CH_BEACON))
     {
@@ -165,27 +176,24 @@ bool live_telem_get_float(uint16_t *id,
 
   while (!rb_tx_empty())
     {
-      if (rb_tx_read(&pkt))
+      if (!rb_tx_read(&pkt))
         {
-          last = pkt;
-          got  = true;
+          continue;
+        }
+
+      if (pkt.id == TELEM_ID_B1 && b1_out)
+        {
+          memcpy(b1_out, &pkt.payload.b1, sizeof(*b1_out));
+          if (got_b1) { *got_b1 = true; }
+        }
+      else if (pkt.id == TELEM_ID_B2 && b2_out)
+        {
+          memcpy(b2_out, &pkt.payload.b2, sizeof(*b2_out));
+          if (got_b2) { *got_b2 = true; }
         }
     }
 
-  if (!got)
-    {
-      if (id) { *id = 0; }
-      return false;
-    }
-
-  if (id) { *id = last.id; }
-  if (d1) { *d1 = last.data[0]; }
-  if (d2) { *d2 = last.data[1]; }
-  if (d3) { *d3 = last.data[2]; }
-  if (d4) { *d4 = last.data[3]; }
-  if (d5) { *d5 = last.data[4]; }
-
-  return true;
+  return (got_b1 && *got_b1) || (got_b2 && *got_b2);
 }
 
 /* ============================================================

@@ -44,256 +44,12 @@ uint32_t Satellite_GetTotalPacketsSent(void) {
     return s_total_packets_sent;
 }
 
-static uint32_t Get_Time_Ms(void);
-
-/*
- * ============================================================================
- * BEACON 1/2 + CW1/2 -- Packet Format sheet-compliant telemetry packing.
- * See Mission/config.h for the struct/field definitions and the real-vs-
- * honestly-zeroed data source notes.
- * ============================================================================
- */
-
-/* CRC-8, poly 0x07, init 0x00 -- Beacon1Packet_t/Beacon2Packet_t's chk_crc. */
-static uint8_t Beacon_Crc8(const uint8_t *data, uint16_t len) {
-    uint8_t crc = 0x00;
-    for (uint16_t i = 0; i < len; i++) {
-        crc ^= data[i];
-        for (int b = 0; b < 8; b++) {
-            crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);
-        }
-    }
-    return crc;
-}
-
-static void Beacon1_Pack(const Beacon1Packet_t *b, uint8_t out[BEACON1_PAYLOAD_LEN]) {
-    uint8_t *p = out;
-    *p++ = BEACON1_HEAD;
-    *p++ = b->type;
-    *p++ = (uint8_t)(b->tim_day >> 8); *p++ = (uint8_t)b->tim_day;
-    *p++ = b->tim_hour;
-    *p++ = (uint8_t)(b->bat_v >> 8); *p++ = (uint8_t)b->bat_v;
-    *p++ = (uint8_t)(b->bat_i >> 8); *p++ = (uint8_t)b->bat_i;
-    *p++ = b->bat_temp;
-    *p++ = b->raw_v;
-    *p++ = b->raw_i;
-    *p++ = (uint8_t)(b->sol_tot_v >> 8); *p++ = (uint8_t)b->sol_tot_v;
-    *p++ = b->sol_tot_i;
-    *p++ = b->unreg_i;
-    *p++ = b->main_3v3_i;
-    *p++ = b->msn_3v3_i;
-    *p++ = b->v5_i;
-    *p++ = b->adc_3v32_i;
-    *p++ = b->temp1;
-    *p++ = b->temp2;
-    *p++ = b->temp3;
-    *p++ = b->temp4;
-    *p++ = b->temp5;
-    *p++ = b->bpb_t;
-    *p++ = b->ant_p_t;
-    *p++ = b->obc_com_t;
-    *p++ = b->system_stat;
-    *p++ = b->mcu_stat;
-    *p++ = b->adc_stat;
-    *p = Beacon_Crc8(out, (uint16_t)(p - out));
-}
-
-static void Beacon2_Pack(const Beacon2Packet_t *b, uint8_t out[BEACON2_PAYLOAD_LEN]) {
-    uint8_t *p = out;
-    *p++ = BEACON2_HEAD;
-    *p++ = b->type;
-    *p++ = (uint8_t)(b->tim_day >> 8); *p++ = (uint8_t)b->tim_day;
-    *p++ = b->sol_p1_v;
-    *p++ = b->sol_p2_v;
-    *p++ = b->sol_p3_v;
-    *p++ = b->sol_p4_v;
-    *p++ = b->sol_p5_v;
-    *p++ = b->sol_p1_i;
-    *p++ = b->sol_p2_i;
-    *p++ = b->sol_p3_i;
-    *p++ = b->sol_p4_i;
-    *p++ = b->sol_p5_i;
-    *p++ = b->gyro_x;
-    *p++ = b->gyro_y;
-    *p++ = b->gyro_z;
-    *p++ = b->mag_x;
-    *p++ = b->mag_y;
-    *p++ = b->mag_z;
-    *p++ = b->power_stat;
-    *p = Beacon_Crc8(out, (uint16_t)(p - out));
-}
-
-static void CwBeacon1_Pack(const CwBeacon1_t *b, uint8_t out[CW_BEACON_PACKED_LEN]) {
-    out[0] = (uint8_t)(((b->system_stat & 0x03) << 6) |
-                        ((b->mission_status & 0x03) << 4) |
-                        (b->time_after_reset & 0x0F));
-    out[1] = b->sol_total_i;
-    out[2] = (uint8_t)(b->sol_total_v >> 8);
-    out[3] = (uint8_t)b->sol_total_v;
-    out[4] = (uint8_t)(b->bat_v >> 8);
-    out[5] = (uint8_t)b->bat_v;
-    out[6] = (uint8_t)(b->bat_i >> 8);
-    out[7] = (uint8_t)b->bat_i;
-}
-
-static void CwBeacon2_Pack(const CwBeacon2_t *b, uint8_t out[CW_BEACON_PACKED_LEN]) {
-    out[0] = b->gyro_x;
-    out[1] = b->gyro_y;
-    out[2] = b->gyro_z;
-    out[3] = b->mag_x;
-    out[4] = b->mag_y;
-    out[5] = b->mag_z;
-    out[6] = (uint8_t)(((b->sol_plus_x  & 1) << 4) |
-                        ((b->sol_minus_y & 1) << 3) |
-                        ((b->sol_minus_z & 1) << 2) |
-                        ((b->sol_plus_y  & 1) << 1) |
-                        (b->sol_plus_z  & 1));
-    out[7] = b->bat_temp;
-}
-
-static void CwBeacon_HexEncode(const uint8_t *bytes, int len, char *out) {
-    static const char HEX[] = "0123456789ABCDEF";
-    for (int i = 0; i < len; i++) {
-        out[i * 2]     = HEX[(bytes[i] >> 4) & 0x0F];
-        out[i * 2 + 1] = HEX[bytes[i] & 0x0F];
-    }
-    out[len * 2] = '\0';
-}
-
-/* response_type (out[0]) derived from status: ACCEPTED/COMPLETED ->
-   ACK_RESPONSE_TYPE_ACK, every error code -> ACK_RESPONSE_TYPE_NACK. */
-static void Ack_Pack(const AckPacket_t *ack, uint8_t out[ACK_PAYLOAD_LEN]) {
-    out[0] = (ack->status == ACK_STATUS_ACCEPTED || ack->status == ACK_STATUS_COMPLETED)
-                 ? ACK_RESPONSE_TYPE_ACK : ACK_RESPONSE_TYPE_NACK;
-    out[1] = ack->status;
-    out[2] = ack->data_id;
-}
-
-bool Satellite_Send_Ack(const AckPacket_t *ack) {
-    uint8_t payload[ACK_PAYLOAD_LEN];
-    Ack_Pack(ack, payload);
-    return Satellite_Send_Packet_Timeout(payload, sizeof(payload), 0);
-}
-
-/* out must have room for CAMERA_FRAGMENT_HDR_LEN + frag->data_len +
-   CAMERA_FRAGMENT_CRC_LEN bytes. Returns bytes written, or -1 if
-   data_len > CAMERA_FRAGMENT_MAX_DATA. No camera driver exists yet to
-   call this -- see CameraFragment_t's comment in Mission/config.h. */
-int Camera_Fragment_Pack(const CameraFragment_t *frag, uint8_t *out) {
-    if (frag->data_len > CAMERA_FRAGMENT_MAX_DATA) return -1;
-    uint8_t *p = out;
-    *p++ = CAMERA_FRAGMENT_PACKET_TYPE;
-    *p++ = frag->image_id;
-    *p++ = (uint8_t)(frag->fragment_index >> 8); *p++ = (uint8_t)frag->fragment_index;
-    *p++ = (uint8_t)(frag->total_fragments >> 8); *p++ = (uint8_t)frag->total_fragments;
-    *p++ = frag->image_type;
-    *p++ = frag->ai_score;
-    if (frag->data_len > 0) memcpy(p, frag->data, frag->data_len);
-    p += frag->data_len;
-    uint16_t total = (uint16_t)(CAMERA_FRAGMENT_HDR_LEN + frag->data_len);
-    uint16_t crc = AX25_CalculateCRC(out, total);
-    p[0] = (uint8_t)(crc >> 8);
-    p[1] = (uint8_t)crc;
-    return total + CAMERA_FRAGMENT_CRC_LEN;
-}
-
-/* Pack + downlink one Beacon1/Beacon2 AX.25 packet (burst of 1, timeout-
-   bounded like every other TX here) -- the light FEC wrap + (if
-   AUTH_ENABLE) keyed tag are applied transparently inside
-   Protocol_CreatePacket, same as any other payload. */
-bool Satellite_Send_Beacon1(const Beacon1Packet_t *b) {
-    uint8_t payload[BEACON1_PAYLOAD_LEN];
-    Beacon1_Pack(b, payload);
-    return Satellite_Send_Packet_Timeout(payload, sizeof(payload), 0);
-}
-
-bool Satellite_Send_Beacon2(const Beacon2Packet_t *b) {
-    uint8_t payload[BEACON2_PAYLOAD_LEN];
-    Beacon2_Pack(b, payload);
-    return Satellite_Send_Packet_Timeout(payload, sizeof(payload), 0);
-}
-
-/* Builds the 16-hex-digit string for one CW1/CW2 cycle -- caller feeds
-   this straight into the existing Satellite_Send_CW_Beacon/CW_SendString
-   Morse keyer, same as the plain-text message it replaces. */
-void Satellite_BuildCw1Hex(const CwBeacon1_t *b, char out[CW_BEACON_HEX_LEN + 1]) {
-    uint8_t packed[CW_BEACON_PACKED_LEN];
-    CwBeacon1_Pack(b, packed);
-    CwBeacon_HexEncode(packed, CW_BEACON_PACKED_LEN, out);
-}
-
-void Satellite_BuildCw2Hex(const CwBeacon2_t *b, char out[CW_BEACON_HEX_LEN + 1]) {
-    uint8_t packed[CW_BEACON_PACKED_LEN];
-    CwBeacon2_Pack(b, packed);
-    CwBeacon_HexEncode(packed, CW_BEACON_PACKED_LEN, out);
-}
-
-/*
- * One-stop builder: takes the raw 5-value IPC telemetry arrays (Sring_
- * buffer.h's tx_packet_s.data[]) + whether each has EVER actually arrived
- * from CPU1 (no fabricated defaults -- see satellite_main.c), maps what
- * real fields exist onto both the AX.25 Beacon1/2 structs and the CW1/2
- * structs, sends the two AX.25 beacons, and fills in the two CW hex
- * strings for the caller to feed into Satellite_Send_CW_Beacon.
- *
- * Field mapping note: Prem's IPC split (B1=volts+temps, B2=currents+
- * flags) doesn't line up 1:1 with the sheet's Beacon1/Beacon2 split (B1
- * wants both bat_v AND bat_i together; B2 wants per-panel solar+gyro/mag,
- * which nothing here measures yet) -- both b1_data/b2_data are read
- * together below so each struct gets whatever real value exists for it,
- * regardless of which IPC channel it arrived on. Everything with no real
- * source (per-panel solar V/I, gyro, magnetometer, most Beacon1 status/
- * temp bytes) stays zero, not fabricated.
- */
-void Satellite_BuildAndSendTelemetry(const int16_t b1_data[5], bool b1_valid,
-                                      const int16_t b2_data[5], bool b2_valid,
-                                      char cw1_hex_out[CW_BEACON_HEX_LEN + 1],
-                                      char cw2_hex_out[CW_BEACON_HEX_LEN + 1]) {
-    uint32_t uptime_hours = Get_Time_Ms() / 1000UL / 3600UL;
-
-    Beacon1Packet_t b1pkt;
-    memset(&b1pkt, 0, sizeof(b1pkt));
-    b1pkt.type = 1;
-    b1pkt.tim_hour = (uint8_t)(uptime_hours % 24U);
-    if (b1_valid) {
-        b1pkt.bat_v    = (uint16_t)b1_data[0];
-        b1pkt.sol_tot_v = (uint16_t)b1_data[1];
-        b1pkt.ant_p_t  = (uint8_t)(b1_data[2] / 10);
-        b1pkt.bat_temp = (uint8_t)(b1_data[3] / 10);
-        b1pkt.bpb_t    = (uint8_t)(b1_data[4] / 10);
-    }
-    if (b2_valid) {
-        b1pkt.bat_i = (uint16_t)b2_data[2];
-    }
-    Satellite_Send_Beacon1(&b1pkt);
-
-    Beacon2Packet_t b2pkt;
-    memset(&b2pkt, 0, sizeof(b2pkt));
-    b2pkt.type = 1;
-    if (b2_valid) {
-        b2pkt.power_stat = (uint8_t)(((b2_data[3] & 0x0F) << 4) | (b2_data[4] & 0x0F));
-    }
-    Satellite_Send_Beacon2(&b2pkt);
-
-    CwBeacon1_t cw1;
-    memset(&cw1, 0, sizeof(cw1));
-    cw1.time_after_reset = (uint8_t)(uptime_hours % 16U);
-    if (b1_valid) {
-        cw1.sol_total_v = (uint16_t)b1_data[1];
-        cw1.bat_v = (uint16_t)b1_data[0];
-    }
-    if (b2_valid) {
-        cw1.bat_i = (uint16_t)b2_data[2];
-    }
-    Satellite_BuildCw1Hex(&cw1, cw1_hex_out);
-
-    CwBeacon2_t cw2;
-    memset(&cw2, 0, sizeof(cw2));
-    if (b1_valid) {
-        cw2.bat_temp = (uint8_t)(b1_data[3] / 10);
-    }
-    Satellite_BuildCw2Hex(&cw2, cw2_hex_out);
-}
+/* Beacon1/Beacon2/CW1/CW2/ACK/Camera-fragment packing + the
+   Satellite_Send_Beacon1/2/Ack/BuildCwXHex/BuildAndSendTelemetry helpers
+   that used to live here now live in satellite_main.c (the file that
+   actually drives the mission loop and owns the IPC ring-buffer
+   structs they pack from) -- see Mission/config.h for the struct/field
+   definitions and the real-vs-honestly-zeroed data source notes. */
 
 /* Externs from system / IT files */
 extern SUBGHZ_HandleTypeDef hsubghz;
@@ -514,7 +270,7 @@ void Satellite_CW_Prepare(void) {
     /* Ensure 5V DC/DC (PA0) and 5V PA (PC3) are completely OFF for CW mode */
     uart1_puts(">>> CW PREPARE: 5V DC/DC & 5V PA OFF, 3.3V PA ON (PC2/SO2)\r\n");
     RBI_Enable5VDCDC(0);
-    HAL_GPIO_WritePin(GPIOC, AMP_5V_EN_PIN, GPIO_PIN_RESET);
+    GpioReset(GPIOC, AMP_5V_EN_PIN);
 
     /* Explicitly configure 3.3V PA (PC2/SO2) for CW mode (3.3V rail is hardware always-on) */
     RBI_SetTxSwitchConfig(s_config.rfSwitchConfig);
@@ -605,7 +361,7 @@ void Satellite_Hold_Continuous_Carrier_5V(uint32_t seconds) {
     Radio.Standby();
 
     /* 1. Ensure 3.3V External PA (PC2) is OFF */
-    HAL_GPIO_WritePin(GPIOC, AMP_3V3_EN_PIN, GPIO_PIN_RESET);
+    GpioReset(GPIOC, AMP_3V3_EN_PIN);
 
     /* 2. Enable 5V DC/DC Converter (PA0 = 1) */
     RBI_Enable5VDCDC(1);
@@ -1054,7 +810,7 @@ void Satellite_GFSK_Prepare(void) {
          * 4. Configure RF switch (PC4=0, PC5=1) and assert 5V External PA (PC3 = 1)
          * 5. Settle delay: 15 ms for PA DC bias stabilization before RF transmission.
          */
-        HAL_GPIO_WritePin(GPIOC, AMP_3V3_EN_PIN, GPIO_PIN_RESET);
+        GpioReset(GPIOC, AMP_3V3_EN_PIN);
         RBI_Enable5VDCDC(1);
         CPU2_Delay_Ms(50); /* 50 ms robust capacitor soft-start settle delay */
 
@@ -1069,7 +825,7 @@ void Satellite_GFSK_Prepare(void) {
          * 3. Current draw remains <170 mA - zero brownout risk under any USB supply!
          */
         RBI_Enable5VDCDC(0);
-        HAL_GPIO_WritePin(GPIOC, AMP_5V_EN_PIN, GPIO_PIN_RESET);
+        GpioReset(GPIOC, AMP_5V_EN_PIN);
 
         RBI_SetTxSwitchConfig(s_config.rfSwitchConfig);
         Satellite_SetRFSwitch(s_config.rfSwitchConfig);

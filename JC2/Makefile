@@ -306,19 +306,38 @@ STM32_PROG ?= $(shell which STM32_Programmer_CLI 2>/dev/null || ls $(HOME)/STMic
 # CPU1 / Cortex-M4 at 0x08000000 (sectors 0-99) is strictly preserved!
 # ==========================================================================
 
+# SERIAL=<probe-serial> picks a specific ST-Link when more than one is
+# connected at once (e.g. the Nucleo's onboard ST-Link V3 for the
+# satellite board + an external ST-Link V2 for the ground station) --
+# required then, since "probe 0"/first-detected is ambiguous and could
+# silently flash the wrong board. `make probes` lists what's attached.
+SERIAL ?=
+ifneq ($(SERIAL),)
+  OPENOCD_HLA_SERIAL := -c "adapter serial $(SERIAL)"
+  STM32PROG_SN := sn=$(SERIAL)
+else
+  OPENOCD_HLA_SERIAL :=
+  STM32PROG_SN :=
+endif
+
+probes:
+	@echo "Connected ST-Link probes (st-info):"
+	@st-info --probe 2>&1 || echo "  (st-info not found or no probes detected)"
+
 flash: $(TARGET).bin
 	@if [ -x "$$(which $(STM32_PROG) 2>/dev/null)" ] || [ -x "$(STM32_PROG)" ]; then \
 	  echo "Ensuring Option Bytes: C2BOOTADD0 / SBRV -> 0x08032000..."; \
-	  $(STM32_PROG) -c port=SWD mode=UR -ob C2BOOTADD0=0x08032000 2>/dev/null || \
-	  $(STM32_PROG) -c port=SWD mode=UR -ob SBRV=0x00032000 2>/dev/null || true; \
+	  $(STM32_PROG) -c port=SWD $(STM32PROG_SN) mode=UR -ob C2BOOTADD0=0x08032000 2>/dev/null || \
+	  $(STM32_PROG) -c port=SWD $(STM32PROG_SN) mode=UR -ob SBRV=0x00032000 2>/dev/null || true; \
 	  echo "Flashing $(TARGET).bin to 0x08032000 using STM32_Programmer_CLI (CPU1 preserved)..."; \
-	  $(STM32_PROG) -c port=SWD mode=UR -w $(TARGET).bin 0x08032000 -v -hardRst 2>/dev/null || \
-	  $(STM32_PROG) -c port=SWD mode=HOTPLUG -w $(TARGET).bin 0x08032000 -v -hardRst 2>/dev/null || \
-	  $(STM32_PROG) -c port=SWD -w $(TARGET).bin 0x08032000 -v -hardRst || \
+	  $(STM32_PROG) -c port=SWD $(STM32PROG_SN) mode=UR -w $(TARGET).bin 0x08032000 -v -hardRst 2>/dev/null || \
+	  $(STM32_PROG) -c port=SWD $(STM32PROG_SN) mode=HOTPLUG -w $(TARGET).bin 0x08032000 -v -hardRst 2>/dev/null || \
+	  $(STM32_PROG) -c port=SWD $(STM32PROG_SN) -w $(TARGET).bin 0x08032000 -v -hardRst || \
 	  (echo "STM32_Programmer_CLI failed. Trying OpenOCD fallback..." && \
 	  openocd \
 	    -f interface/stlink.cfg \
 	    -c "transport select hla_swd" \
+	    $(OPENOCD_HLA_SERIAL) \
 	    -c "reset_config none" \
 	    -f target/stm32wlx.cfg \
 	    -c "init" \
@@ -333,6 +352,7 @@ flash: $(TARGET).bin
 	  openocd \
 	    -f interface/stlink.cfg \
 	    -c "transport select hla_swd" \
+	    $(OPENOCD_HLA_SERIAL) \
 	    -c "reset_config none" \
 	    -f target/stm32wlx.cfg \
 	    -c "init" \
@@ -348,13 +368,13 @@ sat SAT:
 	$(MAKE) APP=satellite satellite.bin
 
 flash_sat flash_SAT flash_m0 flash_cpu2:
-	$(MAKE) APP=satellite flash
+	$(MAKE) APP=satellite SERIAL="$(SERIAL)" flash
 
 gs GS:
 	$(MAKE) APP=gs gs.bin
 
 flash_gs flash_GS:
-	$(MAKE) APP=gs flash
+	$(MAKE) APP=gs SERIAL="$(SERIAL)" flash
 
 
 # ==========================================================================
@@ -387,4 +407,4 @@ clean:
 	find . -path "./V1.4" -prune -o -type f \( -name "*.o" -o -name "*.d" \) -exec rm -f {} +
 
 
-.PHONY: all flash sat SAT flash_sat flash_SAT gs GS flash_gs flash_GS size clean
+.PHONY: all flash sat SAT flash_sat flash_SAT gs GS flash_gs flash_GS probes size clean

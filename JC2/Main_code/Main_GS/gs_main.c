@@ -43,11 +43,17 @@ GROUND STATION RADIO PROFILE
 
 const RadioConfig_t GroundStationProfile =
 {
-    /* Ground station transmit frequency, satellite uplink receiver */
-    .txFrequency = 868000000UL,
+    /* Ground station transmit frequency, satellite uplink receiver --
+       437.375 MHz per Mission/config.h's documented frequency plan.
+       Was hardcoded to 868000000UL (EU ISM band, not this project's
+       UHF ham band) -- a real bug that would have put the GS on the
+       wrong frequency entirely for any real-RF test. */
+    .txFrequency = DEFAULT_TX_FREQUENCY_HZ,
 
-    /* Ground station receive frequency, satellite downlink transmitter */
-    .rxFrequency = 868000000UL,
+    /* Ground station receive frequency, satellite downlink transmitter --
+       435.000 MHz per Mission/config.h's documented frequency plan.
+       Same 868 MHz bug as txFrequency above. */
+    .rxFrequency = DEFAULT_RX_FREQUENCY_HZ,
 
     /* AX25 address */
     .sourceCallsign = "GROUND",
@@ -150,6 +156,7 @@ FORWARD DECLARATIONS
 
 static void Print_Hex_Bytes(const uint8_t *buf, uint16_t len);
 static void Print_Payload_ASCII(const uint8_t *buf, uint16_t start, uint16_t end);
+static void Print_Decoded_Sheet_Payload(const uint8_t *buf, uint16_t len);
 static bool Looks_Like_Stale_TX_Buffer(const uint8_t *buf, uint16_t len);
 static void Print_AX25_Fields(const char *label, const uint8_t *buf, uint16_t len);
 static void Process_Received_Frame(void);
@@ -204,6 +211,110 @@ static void Print_Payload_ASCII(const uint8_t *buf, uint16_t start, uint16_t end
     }
     pos += (uint16_t)snprintf(&line[pos], sizeof(line) - pos, "\"\r\n");
     uart2_puts(line);
+}
+
+
+
+/* CRC-8, poly 0x07, init 0x00 -- mirrors satellite_app.c's Beacon_Crc8
+   (not shared across targets -- GS build doesn't compile satellite_app.c);
+   used here only to verify Beacon1/Beacon2 CHK_CRC on RX. */
+static uint8_t GS_Beacon_Crc8(const uint8_t *data, uint16_t len)
+{
+    uint8_t crc = 0x00;
+    for (uint16_t i = 0; i < len; i++)
+    {
+        crc ^= data[i];
+        for (int b = 0; b < 8; b++)
+        {
+            crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);
+        }
+    }
+    return crc;
+}
+
+static const char *GS_Ack_Status_Name(uint8_t status)
+{
+    switch (status)
+    {
+        case ACK_STATUS_ACCEPTED:         return "ACCEPTED";
+        case ACK_STATUS_COMPLETED:        return "COMPLETED";
+        case ACK_STATUS_PACKET_ERROR:     return "PACKET_ERROR";
+        case ACK_STATUS_CRC_ERROR:        return "CRC_ERROR";
+        case ACK_STATUS_INCOMPLETE:       return "INCOMPLETE";
+        case ACK_STATUS_DATA_MISSING:     return "DATA_MISSING";
+        case ACK_STATUS_DATA_UNAVAILABLE: return "DATA_UNAVAILABLE";
+        case ACK_STATUS_BUSY:             return "SATELLITE_BUSY";
+        case ACK_STATUS_MISSION_INACTIVE: return "MISSION_INACTIVE";
+        case ACK_STATUS_INVALID_COMMAND:  return "INVALID_COMMAND";
+        case ACK_STATUS_MEMORY_ERROR:     return "MEMORY_ERROR";
+        case ACK_STATUS_TX_FAILED:        return "TX_FAILED";
+        default:                          return "UNKNOWN";
+    }
+}
+
+/* Interprets a decoded payload against the Packet Format sheet's Beacon1/
+   Beacon2/ACK-NACK/Command layouts (Mission/config.h) instead of dumping
+   it as raw ASCII -- those are binary structs, not text, so the old
+   ASCII-only dump just printed dots for every real telemetry byte. Falls
+   back to Print_Payload_ASCII for anything that doesn't match a known
+   header/length (e.g. the free-form 81/128-byte test messages). */
+static void Print_Decoded_Sheet_Payload(const uint8_t *buf, uint16_t len)
+{
+    if (len >= BEACON1_PAYLOAD_LEN && buf[0] == BEACON1_HEAD)
+    {
+        uint8_t crc = GS_Beacon_Crc8(buf, BEACON1_PAYLOAD_LEN - 1);
+        uart2_printf("BEACON1 (HEAD=0xB1, %u bytes) CHK_CRC: %s\r\n",
+                     len, (crc == buf[31]) ? "OK" : "MISMATCH");
+        uart2_printf("  TYPE=%u TIM_DAY=%u TIM_HOUR=%u\r\n",
+                     buf[1], (uint16_t)((buf[2] << 8) | buf[3]), buf[4]);
+        uart2_printf("  BAT_V=%u BAT_I=%u BAT_TEMP=%u RAW_V=%u RAW_I=%u\r\n",
+                     (uint16_t)((buf[5] << 8) | buf[6]),
+                     (uint16_t)((buf[7] << 8) | buf[8]),
+                     buf[9], buf[10], buf[11]);
+        uart2_printf("  SOL_TOT_V=%u SOL_TOT_I=%u UNREG_I=%u MAIN_3V3_I=%u 3V3_MSN_I=%u 5V_I=%u ADC_3V32_I=%u\r\n",
+                     (uint16_t)((buf[12] << 8) | buf[13]),
+                     buf[14], buf[15], buf[16], buf[17], buf[18], buf[19]);
+        uart2_printf("  TEMP1-5=%u,%u,%u,%u,%u BPB_T=%u ANT_P_T=%u OBC/COM_T=%u\r\n",
+                     buf[20], buf[21], buf[22], buf[23], buf[24], buf[25], buf[26], buf[27]);
+        uart2_printf("  SYSTEM_STAT=%u MCU_STAT=%u ADC_STAT=%u\r\n", buf[28], buf[29], buf[30]);
+        return;
+    }
+
+    if (len >= BEACON2_PAYLOAD_LEN && buf[0] == BEACON2_HEAD)
+    {
+        uint8_t crc = GS_Beacon_Crc8(buf, BEACON2_PAYLOAD_LEN - 1);
+        uart2_printf("BEACON2 (HEAD=0xB2, %u bytes) CHK_CRC: %s\r\n",
+                     len, (crc == buf[21]) ? "OK" : "MISMATCH");
+        uart2_printf("  TYPE=%u TIM_DAY=%u\r\n", buf[1], (uint16_t)((buf[2] << 8) | buf[3]));
+        uart2_printf("  SOL_P1-5_V=%u,%u,%u,%u,%u\r\n", buf[4], buf[5], buf[6], buf[7], buf[8]);
+        uart2_printf("  SOL_P1-5_I=%u,%u,%u,%u,%u\r\n", buf[9], buf[10], buf[11], buf[12], buf[13]);
+        uart2_printf("  GYRO_X/Y/Z=%u,%u,%u MAG_X/Y/Z=%u,%u,%u\r\n",
+                     buf[14], buf[15], buf[16], buf[17], buf[18], buf[19]);
+        uart2_printf("  POWER_STAT=0x%02X\r\n", buf[20]);
+        return;
+    }
+
+    if (len == ACK_PAYLOAD_LEN &&
+        (buf[0] == ACK_RESPONSE_TYPE_ACK || buf[0] == ACK_RESPONSE_TYPE_NACK))
+    {
+        uart2_printf("%s: status=%s (0x%02X) data_id=0x%02X\r\n",
+                     (buf[0] == ACK_RESPONSE_TYPE_ACK) ? "ACK" : "NACK",
+                     GS_Ack_Status_Name(buf[1]), buf[1], buf[2]);
+        return;
+    }
+
+    if (len == COMMAND_PAYLOAD_LEN && buf[0] == SAT_ID_S2S2)
+    {
+        uart2_printf("COMMAND ECHO: SAT-ID=0x%02X MCU-ID=0x%02X OPCODE=%02X %02X %02X "
+                     "DATA_ID=0x%04X ADDRESS=0x%08lX NUM_PACKETS=%u\r\n",
+                     buf[0], buf[1], buf[2], buf[3], buf[4],
+                     (unsigned)((buf[5] << 8) | buf[6]),
+                     (unsigned long)((buf[7] << 24) | (buf[8] << 16) | (buf[9] << 8) | buf[10]),
+                     (unsigned)((buf[11] << 8) | buf[12]));
+        return;
+    }
+
+    Print_Payload_ASCII(buf, 0, len);
 }
 
 
@@ -412,13 +523,7 @@ static void Process_Received_Frame(void)
         if (Protocol_DecodePayload(&decoded[payload_start], wire_len,
                                     real_payload, sizeof(real_payload), &real_len))
         {
-            uart2_printf("PAYLOAD (%u bytes, ASCII): \"", real_len);
-            for (uint16_t i = 0; i < real_len; i++)
-            {
-                uint8_t c = real_payload[i];
-                uart2_putc((c >= 32 && c <= 126) ? (char)c : '.');
-            }
-            uart2_puts("\"\r\n");
+            Print_Decoded_Sheet_Payload(real_payload, real_len);
         }
         else
         {

@@ -9,36 +9,98 @@
  * STM32WL55 SHARED SRAM2 RING BUFFERS
  * CPU1 = Cortex-M4 (NuttX OBC), CPU2 = Cortex-M0+ (Radio)
  *
- *   0x20008300: Ring TX  (M4 -> M0+)  beacon id + 5 scaled int16
+ *   0x20008300: Ring TX  (M4 -> M0+)  beacon id + sheet-exact payload
  *   0x20008500: Ring RX  (M0+ -> M4)  ground commands
  *   0x20008900: Radio event log (M0+ -> M4)
  */
 
 /* ------------------------------------------------------------
- * Ring TX: M4 -> M0+ (beacon id + 5 scaled integers per packet)
+ * Ring TX: M4 -> M0+ (beacon id + sheet-exact payload per packet)
  *
- *   Beacon 1 (id = 1): batt V x100, solar V x100, ant temp x10,
- *                      batt temp x10, BPB temp x10
- *   Beacon 2 (id = 2): 3V3 I x100, solar I x100, batt I x100,
- *                      flag1, flag2
+ * beacon1_ipc_s / beacon2_ipc_s mirror Beacon1Packet_t/Beacon2Packet_t
+ * (Mission/config.h) field-for-field, minus head/type/chk_crc (those
+ * are added on TX by satellite_app.c's Beacon1_Pack/Beacon2_Pack). CPU1
+ * fills every field it has a real sensor for; anything it doesn't
+ * measure, it leaves 0 -- same "honest zero, not fabricated" rule the
+ * rest of the beacon pipeline already follows. __attribute__((packed))
+ * because this struct crosses the M4/M0+ shared-memory boundary raw --
+ * no padding, no compiler-dependent layout.
  * ------------------------------------------------------------ */
 #define IPC_RING_TX_BASE      0x20008300UL
 #define RING_TX_MAGIC         0x54585242UL  /* "TXRB" */
 #define RING_TX_DEPTH         4U            /* holds DEPTH-1 packets */
-#define TELEM_VALUE_COUNT     5U
 
 #define TELEM_ID_B1           1U
 #define TELEM_ID_B2           2U
 
+struct beacon1_ipc_s
+{
+  uint16_t tim_day;
+  uint8_t  tim_hour;
+  uint16_t bat_v;
+  uint16_t bat_i;
+  uint8_t  bat_temp;
+  uint8_t  raw_v;
+  uint8_t  raw_i;
+  uint16_t sol_tot_v;
+  uint8_t  sol_tot_i;
+  uint8_t  unreg_i;
+  uint8_t  main_3v3_i;
+  uint8_t  msn_3v3_i;
+  uint8_t  v5_i;
+  uint8_t  adc_3v32_i;
+  uint8_t  temp1;
+  uint8_t  temp2;
+  uint8_t  temp3;
+  uint8_t  temp4;
+  uint8_t  temp5;
+  uint8_t  bpb_t;
+  uint8_t  ant_p_t;
+  uint8_t  obc_com_t;
+  uint8_t  system_stat;
+  uint8_t  mcu_stat;
+  uint8_t  adc_stat;
+} __attribute__((packed));
+
+struct beacon2_ipc_s
+{
+  uint16_t tim_day;
+  uint8_t  sol_p1_v;
+  uint8_t  sol_p2_v;
+  uint8_t  sol_p3_v;
+  uint8_t  sol_p4_v;
+  uint8_t  sol_p5_v;
+  uint8_t  sol_p1_i;
+  uint8_t  sol_p2_i;
+  uint8_t  sol_p3_i;
+  uint8_t  sol_p4_i;
+  uint8_t  sol_p5_i;
+  uint8_t  gyro_x;
+  uint8_t  gyro_y;
+  uint8_t  gyro_z;
+  uint8_t  mag_x;
+  uint8_t  mag_y;
+  uint8_t  mag_z;
+  uint8_t  power_stat;
+} __attribute__((packed));
+
+_Static_assert(sizeof(struct beacon1_ipc_s) == 29, "beacon1_ipc_s size");
+_Static_assert(sizeof(struct beacon2_ipc_s) == 19, "beacon2_ipc_s size");
+
 struct tx_packet_s
 {
-  int16_t  data[TELEM_VALUE_COUNT];   /* 5 scaled integers */
+  union
+  {
+    struct beacon1_ipc_s b1;
+    struct beacon2_ipc_s b2;
+    uint8_t               raw[29];   /* sizeof(beacon1_ipc_s), the larger */
+  } payload;
   uint16_t id;                        /* beacon id: 1 = B1, 2 = B2 */
   uint16_t seq;                       /* increments on every update call */
   uint16_t crc16;                     /* CRC-16 over all bytes before it */
-};
+} __attribute__((packed));
 
-_Static_assert(sizeof(struct tx_packet_s) == 16, "tx_packet_s size");
+_Static_assert(sizeof(struct tx_packet_s) == 35, "tx_packet_s size");
 
 struct shared_ring_tx
 {
@@ -50,16 +112,6 @@ struct shared_ring_tx
 
 #define SHARED_RING_TX \
   ((volatile struct shared_ring_tx *)IPC_RING_TX_BASE)
-
-/* float -> scaled int16, rounded and clamped (safe for negatives) */
-static inline int16_t telem_to_i16(float v, float scale)
-{
-  float x = v * scale;
-  x += (x >= 0.0f) ? 0.5f : -0.5f;
-  if (x > 32767.0f)  x = 32767.0f;
-  if (x < -32768.0f) x = -32768.0f;
-  return (int16_t)x;
-}
 
 /* ------------------------------------------------------------
  * Ring RX: M0+ -> M4 (ground commands)
@@ -188,17 +240,18 @@ struct shared_radio_log_s
  * ------------------------------------------------------------ */
 void rb_ipc_init(void);             /* Called by M4 at boot */
 
-/* M4: queue beacon id + 5 scaled integers into TX ring, notify M0+.
- * Returns false if the ring is full or not initialized. */
-bool live_telem_update_float(uint16_t beacon_id,
-                             int16_t d1, int16_t d2, int16_t d3,
-                             int16_t d4, int16_t d5);
+/* M4: queue one sheet-exact Beacon1/Beacon2 IPC payload into the TX ring,
+ * notify M0+. Returns false if the ring is full or not initialized. */
+bool live_telem_update_b1(const struct beacon1_ipc_s *b1);
+bool live_telem_update_b2(const struct beacon2_ipc_s *b2);
 
-/* M0+: drain the ring and return the LATEST valid packet.
- * Returns true and sets *id (1 or 2) if new data; false (*id = 0) if none. */
-bool live_telem_get_float(uint16_t *id,
-                          int16_t *d1, int16_t *d2, int16_t *d3,
-                          int16_t *d4, int16_t *d5);
+/* M0+: single pass over the ring, filling whichever of b1_out/b2_out had
+ * a real packet arrive (leaving the other untouched -- caller keeps its
+ * last value, same "only overwrite on real data" rule as the rest of
+ * the pipeline). got_b1 and got_b2 report which one(s) actually arrived.
+ * Returns true if either one did. */
+bool live_telem_drain_all(struct beacon1_ipc_s *b1_out, bool *got_b1,
+                          struct beacon2_ipc_s *b2_out, bool *got_b2);
 
 /* M0+: read one raw packet (false = empty or CRC error; slot is consumed) */
 bool rb_tx_read(struct tx_packet_s *pkt);

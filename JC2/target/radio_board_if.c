@@ -24,24 +24,8 @@
 
 /* USER CODE BEGIN Includes */
 
-/* Direct BSRR register writes instead of HAL_GPIO_WritePin -- this file is
-   the one place in the whole firmware where GPIO toggle latency actually
-   matters (TX/RX RF switch + PA enable sequencing, the exact timing this
-   file's own fixes are about -- see RF_FRONTEND_AND_TIMING_REPORT.md).
-   BSRR is a single atomic store (set bits in the low 16, reset bits in
-   the high 16), same electrical effect as HAL_GPIO_WritePin, no
-   assert_param/branch overhead. Pin arguments are always compile-time
-   constants at every call site, so these always_inline to exactly one
-   STR instruction each -- not a real function call. */
-__attribute__((always_inline)) static inline void GpioSet(GPIO_TypeDef *port, uint32_t pin) {
-    port->BSRR = pin;
-}
-__attribute__((always_inline)) static inline void GpioReset(GPIO_TypeDef *port, uint32_t pin) {
-    port->BSRR = pin << 16U;
-}
-__attribute__((always_inline)) static inline uint8_t GpioIsSet(GPIO_TypeDef *port, uint32_t pin) {
-    return (port->IDR & pin) != 0U;
-}
+/* GpioSet/GpioReset/GpioIsSet now live in radio_board_if.h (header-inline)
+   so satellite_app.c's AMP_5V_EN/AMP_3V3_EN toggles share the same path. */
 
 /* USER CODE END Includes */
 
@@ -294,7 +278,7 @@ int32_t RBI_GetRFOMaxPowerConfig(RBI_RFOMaxPowerConfig_TypeDef Config)
 {
   if (Config == RBI_RFO_LP_MAXPOWER)
   {
-    return 14; /* 14 dBm: optimal drive for linear GMSK and safe current budget (prevents brownout reset) */
+    return 14; /* 14 dBm: optimal drive for linear GFSK and safe current budget (prevents brownout reset) */
   }
   else
   {

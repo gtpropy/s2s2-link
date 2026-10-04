@@ -161,6 +161,26 @@ typedef enum
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
 
+/* Direct BSRR register writes instead of HAL_GPIO_WritePin -- shared here
+   (header-inline) so both radio_board_if.c and satellite_app.c use the
+   same GPIO toggle path on the RF switch/PA-enable pins, the one place
+   in the firmware where toggle latency actually matters (TX/RX RF switch
+   + PA enable sequencing -- see RF_FRONTEND_AND_TIMING_REPORT.md). BSRR
+   is a single atomic store (set bits in the low 16, reset bits in the
+   high 16), same electrical effect as HAL_GPIO_WritePin, no assert_param/
+   branch overhead. Pin arguments are always compile-time constants at
+   every call site, so these always_inline to exactly one STR instruction
+   each -- not a real function call. */
+__attribute__((always_inline)) static inline void GpioSet(GPIO_TypeDef *port, uint32_t pin) {
+    port->BSRR = pin;
+}
+__attribute__((always_inline)) static inline void GpioReset(GPIO_TypeDef *port, uint32_t pin) {
+    port->BSRR = pin << 16U;
+}
+__attribute__((always_inline)) static inline uint8_t GpioIsSet(GPIO_TypeDef *port, uint32_t pin) {
+    return (port->IDR & pin) != 0U;
+}
+
 /* USER CODE END EM */
 
 /* Exported functions ------------------------------------------------------- */
