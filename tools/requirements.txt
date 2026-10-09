@@ -30,3 +30,5 @@ uvicorn[standard]>=0.29
 
 # flasher.py (build+flash TUI)
 textual>=0.58
+pillow>=10
+pillow-heif>=0.16        # optional: lets the test bench read iPhone/Mac HEIC photos

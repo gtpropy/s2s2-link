@@ -1,0 +1,20 @@
+{
+  "generated": "2026-10-09T17:46:18",
+  "git": "4c7b8d6",
+  "note": "raw air rate test, gaps 300..0 ms, 40 packets each",
+  "sat_bin": {
+    "bin": 52108,
+    "mtime": 1791546898.0851626,
+    "limit": 57344
+  },
+  "gs_bin": {
+    "bin": 49248,
+    "mtime": 1791546959.2479858,
+    "limit": 57344
+  },
+  "results": {
+    "link": null,
+    "image": null,
+    "sdr": null
+  }
+}

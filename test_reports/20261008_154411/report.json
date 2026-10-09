@@ -1,0 +1,86 @@
+{
+  "generated": "2026-10-08T15:44:11",
+  "git": "4c7b8d6",
+  "note": "Run A: lab photo (gs_downloaded_photo.jpg). Nucleo 002E (CPU2 sat firmware, FRONTEND=NUCLEO, LOG=1) <-> GS V2, direct coax, no antennas. OBC flash emulated over SWD. Satellite reset before the test.",
+  "sat_bin": {
+    "bin": 51056,
+    "mtime": 1791451476.2804544,
+    "limit": 57344
+  },
+  "gs_bin": {
+    "bin": 48648,
+    "mtime": 1791449182.489433,
+    "limit": 57344
+  },
+  "results": {
+    "link": {
+      "test": "link",
+      "when": 1791453363.474048,
+      "rows": [
+        {
+          "n": 1,
+          "ok": true,
+          "tries": 9,
+          "latency_ms": 1314,
+          "rssi_avg": -92.5,
+          "frames": 4,
+          "bad_frames": 0,
+          "wrapped_blocks": 4
+        },
+        {
+          "n": 2,
+          "ok": true,
+          "tries": 5,
+          "latency_ms": 1269,
+          "rssi_avg": -91.8,
+          "frames": 4,
+          "bad_frames": 0,
+          "wrapped_blocks": 4
+        },
+        {
+          "n": 3,
+          "ok": true,
+          "tries": 4,
+          "latency_ms": 1254,
+          "rssi_avg": -93.5,
+          "frames": 4,
+          "bad_frames": 0,
+          "wrapped_blocks": 4
+        }
+      ],
+      "passed": 3,
+      "total": 3,
+      "verdict": "PASS"
+    },
+    "image": {
+      "test": "image",
+      "when": 1791453542.308189,
+      "name": "gs_downloaded_photo.jpg",
+      "bytes": 8774,
+      "chunks": 69,
+      "received": 69,
+      "missing": [],
+      "duplicates": 0,
+      "src_sha256": "d398c92e3f11ec5becc1da1cc0f04306adc3ee5ea42fd7102e7190e9fd2cc2d0",
+      "rx_sha256": "d398c92e3f11ec5becc1da1cc0f04306adc3ee5ea42fd7102e7190e9fd2cc2d0",
+      "match": true,
+      "elapsed_s": 155.0,
+      "payload_bps": 767,
+      "first_pass_got": 69,
+      "passes": [
+        {
+          "pass": 1,
+          "got": 69,
+          "tries": 3,
+          "stream_s": 92.1,
+          "missing": []
+        }
+      ],
+      "ring_fed": 69,
+      "rssi_avg": -93.7,
+      "tries": 3,
+      "verdict": "PASS"
+    },
+    "sdr": null
+  }
+}

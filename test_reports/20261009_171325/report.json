@@ -1,0 +1,25 @@
+{
+  "generated": "2026-10-09T17:13:25",
+  "git": "4c7b8d6",
+  "note": "90 s beacon during transfer, uploaded big PNG auto-compressed, board 002D",
+  "sat_bin": {
+    "bin": 51568,
+    "mtime": 1791544876.804513,
+    "limit": 57344
+  },
+  "gs_bin": {
+    "bin": 48648,
+    "mtime": 1791467311.509104,
+    "limit": 57344
+  },
+  "results": {
+    "link": null,
+    "image": {
+      "test": "image",
+      "when": 1791545294.677129,
+      "verdict": "FAIL",
+      "why": "write failed: [Errno 6] Device not configured"
+    },
+    "sdr": null
+  }
+}

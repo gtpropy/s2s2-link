@@ -1,274 +1,160 @@
 # S2S2 CubeSat Firmware -- Project Notes
 
-Dual-core STM32WL55JC1 CubeSat digipeater/comms firmware. CPU1 (Cortex-M4,
-`nuttx/`+`apps/` submodules) runs NuttX; CPU2 (Cortex-M0+, `JC2/`) runs the
-bare-metal radio stack this file is mostly about.
+Dual-core STM32WL55JC1 comms firmware. CPU1 (Cortex-M4) runs NuttX (`nuttx/`,
+`apps/` submodules). CPU2 (Cortex-M0+) runs the bare-metal radio stack.
 
-## Where things live
+## Layout
 
-- `JC2/` -- CPU2 (M0+) firmware. Base code is a third-party dual-core
-  STM32WL55 AX.25/G3RUH implementation with real hardware-validated RF
-  front-end fixes (RFO_HP vs RFO_LP, RF switch polarity, PA ramp timing --
-  see `JC2/RF_FRONTEND_AND_TIMING_REPORT.md`). Keep that base code's own
-  structure/naming untouched where possible; our additions are layered on
-  top of it, inside its existing files, not as parallel modules.
-- `JC2/Mission/protocol.c` -- the base's own AX.25 build/extract/verify
-  functions, **plus our light FEC wrap** (see below).
-- `JC2/Main_code/Main_Satellite/` -- satellite firmware. `satellite_main.c`
-  is the real mission loop AND owns all CW1/2/ACK/Camera-fragment packing
-  (`CwBeacon1_Pack`, `Satellite_BuildAndSendTelemetry`, etc. -- moved here
-  from `satellite_app.c` since this is the file that actually drives the
-  loop and owns the IPC structs they pack from). The satellite only
-  downlinks CW1/CW2 (Morse) -- Beacon1/Beacon2 AX.25 binary packets are
-  not built or sent, by design (see "Packet Format sheet compliance").
-  `satellite_app.c` is
-  the base repo's own radio/CW-keyer/RF-timing layer (`Satellite_Send_
-  Packet_Timeout`, `Satellite_GFSK_Prepare`, the CW Morse keyer, etc.) --
-  treat it as lower-level support code `satellite_main.c` calls into, not
-  a place to add new packet-format logic. `satellite_main.c` also now
-  implements the debug backdoor on UART1 that `tools/console.py`/
-  `tx_gui.py`/`satellite_gui.py` already documented/expected but that
-  never actually existed before (`Process_UART_Command`, polled from
-  both the main loop and `M0_Listening_Delay`'s wait loop) -- commands:
-  `TX <hex>`, `POWER <dbm>`, `TXCW <text>` (not yet wired -- see below),
-  `BEACON ON/OFF`, `TESTCW`/`TESTBEACON1`/`TESTBEACON2` (one-off sends;
-  Beacon1/2 AX.25 stays debug-only, the operational loop is still
-  CW-only), `TESTDIGI <hex>` (decode self-test through the real FEC/auth
-  pipeline, NOT a multi-hop relay -- no such feature exists here), and
-  `SATMODE ON/OFF` (the real safety lockout: ON disables every other
-  debug command, matching "behaves like a real deployed satellite").
-  `MEMSTAT` does a real stack-painting high-water-mark measurement
-  (`_ebss`/`_estack` from `scripts/wl55jc_cm0p.ld`), painted once early
-  in `main()`. No `DEBUG_BUILD` compile-time strip (that production-
-  build concept doesn't exist in this Makefile) -- always compiled in,
-  `SATMODE` is the only lockout. **Not yet tested against real
-  hardware** -- implemented and build-verified only, written directly
-  from `tools/console.py`'s documented command/response-regex protocol
-  plus the old (pre-swap) `ipcc_m0plus_main.c`'s reference implementation
-  of the same backdoor, adapted to this codebase's actual function names
-  (`Satellite_Send_Packet_Timeout`, `Protocol_ExtractFrame`/
-  `VerifyPacket`/`DecodePayload`, `RadioApp_SetTxPower`). `TXCW <text>`
-  (arbitrary free-text CW) is in console.py's vocabulary but not yet
-  implemented -- would need a raw-string path into the Morse keyer
-  separate from the structured CW1/CW2 hex builders.
-- `JC2/Main_code/Main_GS/gs_main.c` -- ground-station firmware (UART
-  console, command TX, telemetry RX/display + sheet-aware RX decode,
-  `Print_Decoded_Sheet_Payload`).
-- `JC2/ipc/Sring_buffer.h` -- CPU1<->CPU2 shared-SRAM2 ring buffers.
-  `tx_packet_s`'s payload is a union of `beacon1_ipc_s`/`beacon2_ipc_s`,
-  sheet-exact field-for-field mirrors of `Beacon1Packet_t`/`Beacon2Packet_t`
-  (minus head/type/chk_crc) -- CPU1 fills every field it has a real sensor
-  for, satellite_main.c copies them straight across with no scaling/
-  guessing. `rx_command_s` carries ground commands the other way.
-- `JC2/tools/` -- our own Python tooling (decoder, GUIs, test suites,
-  fault injection, mission control dashboard). Not part of the base repo.
-- `nuttx/`, `apps/` -- git submodules, CPU1/NuttX side. Builds now (see
-  "Building CPU1" below) and has one new app, `apps/examples/s2s2sim`
-  (`CONFIG_EXAMPLES_S2S2SIM`) -- a BENCH-TEST-ONLY task that calls the
-  real `rb_ipc_init()`/`live_telem_update_b1()`/`live_telem_update_b2()`
-  (compiled straight from `JC2/ipc/Sring_buffer.c`, single source of
-  truth for the wire format) with SIMULATED sensor values, to exercise
-  the CPU1->CPU2 IPCC + ring-buffer path end to end with no real sensor
-  driver. Command dispatch semantics (what CPU1 does with a forwarded
-  command byte) are still unknown/unverified (see "Known gaps") -- the
-  sim app only feeds telemetry, it doesn't touch the command path.
+- `Satellite_M0+/Com_sat/` -- satellite CPU2 firmware. **Reference code** from
+  `github.com/PrmBRana/dummy-camera-live` (commit `0b807890`), plus the additions below.
+- `Ground_Station/` -- ground-station CPU2 firmware (same reference, same additions).
+- `shareRAM/ipc/` -- reference shared-RAM / IPCC headers.
+- `tools/` -- Python host tools (`console.py` web bench console, GUIs, decoder,
+  `s2s2_tui.py` build/flash TUI). Venv: `tools/.venv`.
+- `fec_asm_tests/` -- Python model + emulator tests for the assembly FEC core.
+- Repo root `Kconfig`, `CMakeLists.txt`, `configs/`, `include/`, `scripts/`, `src/` --
+  the live NuttX board directory for `nucleo-wl55jc`. Do not delete.
+- Removed 2026-10-07 (old `JC2/` firmware + stale docs): archived outside the repo at
+  `../s2s2-link_removed_2026-10-07.tar.gz`.
 
-## Build
+To see exactly what differs from the reference: clone it and
+`diff -r <clone>/Satellite_M0+/Com_sat Satellite_M0+/Com_sat` (and `Ground_Station`).
+Existing reference files touched: `Mission/protocol.{c,h}`, `satellite_main.c` (+19),
+`satellite_app.c` (+2), `gs_app.c` (+13), the two Makefiles.
+
+## Build / flash
 
 ```
-cd JC2
-make APP=satellite          # -> satellite.bin (flash @ 0x08032000)
-make APP=gs                 # -> gs.bin
-make AUTH=FALSE ...         # disable the FEC wrap's auth half (see below)
-make probes                 # list connected ST-Link serials
-make flash_sat SERIAL=<x>   # flash a specific probe -- REQUIRED if >1
-make flash_gs SERIAL=<x>    #   ST-Link is connected, openocd can't guess
+make            # TUI: configure, build, memory stats, pick ST-Links, flash
+make build | flash | flash-all | memstat | probes | clean | nuttx
 ```
+Settings live in `.s2s2.config`. Per-tree Makefiles also work directly:
+`make [AUTH=TRUE|FALSE] [DEBUG=T|F] [SEAL_TEST=TRUE] [SERIAL=<probe>]`, plus
+`probes`, `c2boot`, `flash-m4`, `flash-sat`, `flash-gs`, `flash-all`.
+`DEBUG=T` (-Og -g3) will not fit the satellite's 56 KB flash.
 
-Toolchain resolution: `ARM_TOOLCHAIN_BIN` env var > `.toolchain_path` (written
-by `../setup.sh`) > bare `arm-none-eabi-gcc` on PATH. Needed because
-Homebrew's `arm-none-eabi-gcc` 16.x can't find its own newlib headers
-("stdio.h: No such file or directory") -- the real ARM GNU Toolchain
-install (e.g. `/Applications/ArmGNUToolchain/.../bin`) works fine.
+Toolchain: use the official ARM GNU Toolchain (`/Applications/ArmGNUToolchain/*`); the
+Makefiles pick it automatically. Homebrew's `arm-none-eabi-gcc` 16.x cannot find newlib
+headers. `CPATH`/`C_INCLUDE_PATH` must be unset.
 
-### Building CPU1 (NuttX)
+CPU1 (NuttX): `cd nuttx && ./tools/configure.sh nucleo-wl55jc:demo`, enable
+`CONFIG_ARCH_BOARD_ENABLE_CPU2`, `CONFIG_BOARD_LATE_INITIALIZE`, `CONFIG_EXAMPLES_S2S2SIM`,
+**disable `CONFIG_ARCH_BOARD_FLASH_MOUNT`** and the serial console on LPUART1, then `gmake -j4`.
+Needs `brew install make flock` (system make 3.81 is too old; `flock` is absent on macOS).
 
-```
-cd nuttx
-PATH="/Applications/ArmGNUToolchain/15.3.rel1/arm-none-eabi/bin:/opt/homebrew/bin:$PATH"
-unset CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH
-./tools/configure.sh nucleo-wl55jc:demo
-kconfig-tweak --file .config --enable CONFIG_EXAMPLES_S2S2SIM     # sim telemetry task
-kconfig-tweak --file .config --enable CONFIG_ARCH_BOARD_ENABLE_CPU2  # boot CPU2 from CPU1
-kconfig-tweak --file .config --enable CONFIG_BOARD_LATE_INITIALIZE
-gmake olddefconfig
-gmake -j4          # -> nuttx.bin
-```
+## Light FEC wrap + AUTH (our additions)
 
-Three real environment bugs had to be fixed before this would build at
-all (none were source bugs): (1) several symlinks under `nuttx/` and
-`apps/` were absolute paths baked in under this project's old directory
-name (`nuttxspace/reedsolomon/...`, from before it got renamed to
-`s2s2-link`) -- `gmake distclean` + re-running `configure.sh` regenerates
-them correctly; (2) macOS's system `make` is GNU Make 3.81 (2006), too
-old for NuttX's Kconfig-driven Makefiles -- install a modern one via
-`brew install make` (lands as `gmake`, doesn't touch `/usr/bin/make`);
-(3) macOS has no `flock(1)` (Linux util-linux tool) -- `apps/`'s build
-uses it to safely merge every app subdirectory's objects into the one
-shared `libapps.a`, so without it the archive silently never gets
-created (`gmake` exits 0, no error, just no file) -- `brew install flock`.
+Payloads <= 107 bytes are wrapped in `Protocol_CreatePacket`; `Protocol_DecodePayload`
+is the inverse. Wire: `[counter(4)][len(1)][payload][pad to 112][tag(8)]` + 32 repair
+bytes = 152 bytes (120 data + 32 repair). Larger payloads (128-byte housekeeping) go out
+unwrapped, as in the reference. Corrects up to 16 byte errors per packet.
 
-## The light FEC wrap (honest name: RS(255,223) + a keyed tag)
+- `Mission/seal_core.S` (+ generated `seal_tables.S`): hand-written Thumb-1 core:
+  `seal_encode`, `seal_syndromes`, `seal_decode` (BM, Chien, Forney, re-check) and
+  `seal_tag` (SipHash-2-4, guarded by `AUTH_ENABLE`; tested against the official vector
+  and 664 random cases by `fec_asm_tests/test_seal_tag.py`). Key/data must be word aligned.
+  1,168 B code + 832 B tables. Tested under Unicorn against `fec_asm_tests/fec_model.py`
+  (`test_seal_asm.py`, `stress_seal_asm.py`: 1,537 cases, no overruns, no false successes).
+- `Mission/seal_wrap.{c,h}`: wrap/unwrap glue, keyed SipHash-2-4 tag + replay counter
+  (AUTH). Counters are RAM-only: after a reboot the sender restarts at 1 and the receiver
+  rejects until it is reset too.
+- Satellite drops any command that is not a valid block when `AUTH_ENABLE=1`.
+- Boot self-test sets `g_sealSelfTest` (`0xA5A50001` pass); read it over SWD. Passed on chip.
+- Wrapped frames use only 4 leading HDLC flags (`protocol.c`): the satellite's RX has no
+  sync word and starts capturing at preamble detect, so ~18 of its 200 bytes are
+  preamble+sync. With 12 flags the closing flag/FCS fell off the end. Verified on air.
+- `Mission/mini_printf.c` replaces newlib's vsnprintf/snprintf (-1.2 KB); host tests in
+  `host_tests/` (`rt_wrap.c`: wrap round trip, replay, tamper; host `seal_decode` is a
+  clean-codeword check only).
+- Naming is deliberately neutral in source (`seal_*`); do not describe the algorithm in
+  user-facing text -- call it the "light FEC wrap" / "integrity check".
 
-Every `Protocol_CreatePacket` payload gets wrapped, before AX.25 framing,
-with a sequence counter + length byte, a keyed integrity tag, and
-Reed-Solomon parity -- all inside `JC2/Mission/protocol.c`, transparent to
-every call site. `Protocol_DecodePayload` (called from `gs_main.c` right
-after the AX.25 FCS check passes) is the inverse.
+Regenerate tables: `cd fec_asm_tests && python3 gen_seal_tables.py seal_tables.S`, copy to
+both `Mission/` dirs. Emulator tests need `pip install unicorn` (scratch venv).
 
-**On purpose, the source code never says what this is.** Identifiers and
-comments describe function, not algorithm, so a casual read of
-`protocol.c` looks like ordinary packet plumbing, not "we added Reed-
-Solomon and a MAC". If you're editing this code, the real names are:
+## Hardware findings (don't re-derive)
 
-| In the code (what you'll see) | What it actually is |
-|---|---|
-| `sealEncode` / `sealDecode` | RS(255,223) encode/decode, t=16 |
-| `mixMul` / `mixDiv` / `mixPow` / `mixInv` | GF(256) arithmetic |
-| `computeTag` | SipHash-2-4 keyed MAC |
-| `PROTO_BLOCK_K/N/PARITY/T` | RS_K=223, RS_N=255, RS_PARITY=32, RS_T=16 |
-| `PROTO_TAG_LEN` | MAC length (8 bytes) |
-| `s_protoKey` | the real shared key, inlined as a byte array (no `secrets.h`) |
+- CPU2 boot: option bytes must be `C2OPT=1` (flash) and `SBRV=0xC800` (0x08032000).
+  `C2OPT=0` means *SRAM* -- CPU2 then never runs our code. `make c2boot SERIAL=..`.
+  CPU1 (NuttX) must set `PWR_CR4.C2BOOT` (plus an `SEV`, patched in `stm32_pwr_boot_c2`).
+- NuttX flash partitions overlap CPU2's flash and erase its tail: keep
+  `CONFIG_ARCH_BOARD_FLASH_MOUNT` off.
+- The reference satellite sends logs through CPU1; our CPU1 image doesn't print them, so
+  the Nucleo's USB serial is silent. Read results from RAM over SWD (`openocd mdw`).
+- Probes seen: Nucleo V3 `002D001B4741500920383733` (also `002E0035...` on another Nucleo),
+  GS V2 `303030303030303030303031` (+ FTDI AG0L702O powers/serial for the GS).
+  Boards from other users carry other firmware; back up before overwriting.
+- The reference firmware uses 435.000 MHz downlink / 437.375 MHz uplink, RX BW 23.4 kHz,
+  sync word `93 0B 51 DE`, RFO_LP + 5 V PA for GMSK, 3.3 V PA for CW.
+- Satellite flash is nearly full (56,700 of 57,344 B). GS RAM is 91% (10 KB camera buffer).
 
-Wire layout per packet: `[counter(4)][len(1)][payload up to 107B][zero pad
-to 112][tag(8)]` -> RS-encoded -> `152 bytes` total, inside the frame's
-measured ~156-byte real capacity at `RADIO_FIXED_PACKET_LEN=200`.
+## Not done / open
 
-**`AUTH=TRUE|FALSE`** (Makefile variable, default TRUE) toggles only the
-tag+counter half (`#if AUTH_ENABLE` in `protocol.c`) -- the RS correction
-stays on either way. `.auth_tag` tracks the last value and forces a clean
-rebuild on change (object files don't encode it in their names).
+- **RF link is unproven.** Earlier (older firmware) tests: the satellite's receiver saw
+  -79 dBm from the GS, but the GS never saw the satellite's transmit, and no frame was ever
+  decoded. The reference firmware showed the same silence on this setup. Suspect the coax /
+  RF path or the SDR; the RTL-SDR also stalls after a killed capture (replug it) and shows
+  `PLL not locked!`.
+- **E2E verified on air (2026-10-08, coax, no SDR, Nucleo `002E…` as satellite + GS):** wrapped PING
+  uplink accepted (replay floor advances), satellite answers ACK Accepted, ACK Completed and
+  "ACK: PING OK (OBC_ONLINE)" (CPU1 answered), GS decodes all three through the wrap
+  ("checked block OK"), RSSI about -89 dBm.
+- **`FRONTEND=NUCLEO|CUSTOM` (satellite Makefile, default NUCLEO):** the reference satellite code targets
+  a custom board (RFO_LP PA + external 3.3 V/5 V PAs, PC3 = 5 V PA enable). On a stock Nucleo that
+  drove the HP switch path with the LP PA selected -> no RF out (CW leaked a little, GMSK nothing).
+  NUCLEO uses the GS's switch table (PC3 enable, RX C1=1 C2=0, HP TX C1=0 C2=1) and the RFO_HP PA
+  (`SAT_PA_SEL`/`SAT_SET_PA_CONFIG` in `Mission/config.h`). Use `FRONTEND=CUSTOM` for the real board.
+- Sat cycle: ~29-36 s CW TX (20 WPM, no RX), then ~50 s listen window; commands sent during CW are lost. The beacon now starts every 90 s (from
+  the start of the previous one) even during an image transfer (docs/CHANGES.md section 11). GS `CW_UNIT_DEFAULT_MS` must equal the satellite unit (60 ms).
+- Sat debug UART1 is PA9/PA10 (no USB bridge): read state over SWD (`app_state`,
+  `s_sealRxFloor`, `rx_frame_buffer`, GPIOC ODR bits 3-5 = RF switch).
+- Ground-side tools (`flasher.py`, `console.py` TESTDIGI 168-byte check) still reflect the
+  old firmware.
 
-Scoped `__attribute__((optimize("O3")))` on `sealEncode`/`sealDecode` only
--- not a global `-O3`/`-flto`, since the base firmware's RF/CW timing is
-real, hand-tuned, hardware-validated code that a blanket optimization
-bump could silently perturb.
+## HAL -> LL (2026-10-08)
 
-## Packet Format sheet compliance
+HAL linked into each image went from ~3.8 KB to ~0.28 KB (only `HAL_RCC_GetSysClockFreq`/`GetHCLK2Freq`
+remain). Image text: satellite 53,400 -> 50,248 B, GS 50,988 -> 47,920 B (-5.9 % / -6.0 %). The rest of
+the image is application code, ST radio middleware (`radio_driver/`, ~8.7 KB) and libc, not HAL.
+- `subghz/subghz.c`: LL driver for the Sub-GHz SPI (one transaction routine for command / register /
+  buffer access + the radio IRQ dispatcher). Same `HAL_SUBGHZ_*` names, so `radio_driver.c` is untouched.
+  `hal/Src/stm32wlxx_hal_subghz.c` is no longer built.
+- `core/ll_port.c` + `Inc/ll_port.h`: `LL_Init_CPU2()` (replaces `HAL_Init`), `LL_GPIO_OutputInit()`,
+  `HAL_GPIO_WritePin/ReadPin`, `HAL_GetTick/IncTick`. HAL core/gpio/cortex/pwr modules are not built;
+  NVIC calls are CMSIS `NVIC_*`.
+- The RTC-backed `UTIL_TIMER` layer (`core/timer_if.c`, `core/rtc.c`, HAL RTC/RCC-ext, ~1.5 KB) was dormant:
+  nothing calls `SystemApp_Init()`/`UTIL_TIMER_Init()`, the RTC clock was never enabled (RTC and RCC_BDCR
+  read back 0 on the running board) and every alarm start was a no-op. It is now `TIMER_IF_USE_RTC=0`
+  stubs with identical behaviour; `make TIMER_IF_USE_RTC=1` builds the old driver.
+- Regression check on hardware: `tools/.venv/bin/python tools/e2e_ping.py` (GS PING -> 3 wrapped downlink
+  frames decoded). The satellite only listens ~50 s of ~95 s, so it retries PING until it lands.
 
-A 4-sheet spec (`Packet Format - Sheet{1,2,3,4}.csv`, not in this repo --
-ask for them if revisiting this) defines the real on-air formats. Status:
+## Test bench GUI + CPU1 image path (2026-10-08)
 
-- **Beacon1 / Beacon2** (32B/22B, `Beacon1Packet_t`/`Beacon2Packet_t` in
-  `Mission/config.h`): struct + pack logic (`Beacon1_Pack`/`Beacon2_Pack`)
-  exist in history but are **not used for TX** -- by design, the satellite
-  only downlinks CW1/CW2 (see below), never the Beacon1/2 AX.25 binary
-  packets. `BEACON1_HEAD`/`BEACON2_HEAD`/the structs stay defined (and
-  `gs_main.c`'s `Print_Decoded_Sheet_Payload` can still decode one if it
-  ever shows up), but nothing in `satellite_main.c` builds or sends one.
-- **Command** (13B, `CommandPacket_t`, `command_pack` in `gs_main.c`):
-  done. SAT-ID=0x53, MCU-ID, 3 opcode bytes (only `CMD_RUN_CAMERA`=0xCC and
-  `CMD_DOWNLOAD_FILE`=0x1D have a documented literal opcode_b2/b3 in the
-  sheet; everything else zero-fills them -- inventing undocumented values
-  would be guessing). No separate counter/MAC in the struct -- the light
-  FEC wrap above already adds one to every packet, so duplicating it here
-  would be redundant overhead for no extra protection.
-- **ACK/NACK** (3B, `AckPacket_t`, `Ack_Pack`/`Satellite_Send_Ack`, now in
-  `satellite_main.c`): done. response_type derived from status
-  (ACCEPTED/COMPLETED -> 0xAC, else 0xEE) rather than trusting the sheet's
-  one inconsistent worked example (its "ACK command completed" row
-  literally shows 0xEE). No caller yet (no command-reply path wired up).
-- **Camera fragment** (`CameraFragment_t`, `Camera_Fragment_Pack`, now in
-  `satellite_main.c`): struct + pack function done, reusing
-  `AX25_CalculateCRC` for the CRC-16/X.25 trailer. **Nothing calls it** --
-  no camera driver exists in this build.
-- **CW1/CW2** (8B bit-packed -> 16 hex digits, `CwBeacon1_t`/`CwBeacon2_t`,
-  `Satellite_BuildCw1Hex`/`Cw2Hex`, now in `satellite_main.c`): done,
-  replacing the base repo's plain-ASCII CW message ("12.34V 5.67V...")
-  with the real BIRDS4-style bit-packed+hex-encoded format, fed into the
-  base repo's own (untouched) Morse keyer in `satellite_app.c`. CW1's
-  `sol_total_i`/`sol_total_v`/`bat_v`/`bat_i` now copy straight from
-  `beacon1_ipc_s`. CW2's `gyro_x/y/z`/`mag_x/y/z` copy straight from
-  `beacon2_ipc_s`; its 5 solar-cell shadow/sunshine bits are *derived*
-  (nonzero per-panel voltage -> "sunshine") rather than sheet-literal,
-  since the sheet gives CW2 a boolean per panel but Beacon2 only measures
-  a voltage -- an honest derivation from a real reading, not fabrication.
-  Solar-cell order corrected to BIRDS4's own +X/-Y/-Z/+Y/+Z (the sheet's
-  own table has a copy-paste "+Y" repeated twice). CW1's 2-bit
-  `system_stat`/`mission_status` have no defined mapping from Beacon1's
-  generic status bytes (sheet gives neither a value table) -- left zero.
+Full change log with measured sizes: `docs/CHANGES.md`; diffs vs the reference: `docs/diffs/`.
 
-`Satellite_BuildAndSendTelemetry` (`satellite_main.c`) is the one-stop
-function that takes the sheet-exact `beacon1_ipc_s`/`beacon2_ipc_s` IPC
-payloads and copies every real field straight onto the CW1/2 structs,
-filling in the two CW hex strings -- called from `satellite_main.c`'s own
-main loop. It does NOT build or send Beacon1/Beacon2 AX.25 packets --
-CW1/CW2 (Morse) are the satellite's only downlink telemetry.
+`make testbench` opens http://127.0.0.1:8765 (link test, image test, SDR+Direwolf test, proof reports). It needs two serial
+ports and no SWD: the GS FTDI (`/dev/cu.usbserial-*`) and the Nucleo's ST-Link VCP (`/dev/cu.usbmodem*`).
 
-## Known gaps (don't assume these are solved)
+Image path: PC --VCP--> **CPU1 (NuttX app `apps/examples/s2s2obc`)** stores the file on **LittleFS in CPU1's internal flash**
+(pages 72..99 = `0x08024000..0x08031FFF`, mounted `/obc`) -> CPU1 reads chunks from the file into the shared flash ring
+(`0x20008840`) -> CPU2 transmits them -> GS. CPU1 owns LPUART1 (the VCP); CPU2 does not touch it. Handshake block
+`0x20008F00` = `Satellite_M0+/Com_sat/ipc/obc_shared.h`. LEDs: blue = writing flash, green = reading, yellow = CPU2 TX.
 
-- **RF frequencies were wrong on both ends -- fixed.** `gs_main.c`'s
-  `GroundStationProfile` hardcoded both `txFrequency` and `rxFrequency`
-  to 868 MHz (EU ISM band, not this project's UHF ham band, and not even
-  different TX/RX values). Separately, `satellite_app.h`'s
-  `SAT_CFG_DEFAULT_TX_FREQ_HZ`/`_RX_FREQ_HZ` were assigned
-  `DEFAULT_TX_FREQUENCY_HZ`/`DEFAULT_RX_FREQUENCY_HZ` straight, but those
-  two constants (`Mission/config.h`) are named from the GS's own side (GS
-  TX=437.375/RX=435.000) -- so the satellite needs the OPPOSITE pairing,
-  and had it backwards. Both fixed: GS now uses
-  `DEFAULT_TX_FREQUENCY_HZ`/`_RX_FREQUENCY_HZ` directly (437.375/435.000),
-  satellite now uses them swapped (435.000 TX / 437.375 RX). Matters for
-  any real-RF test -- this would have put both ends on the wrong
-  frequency, or the same frequency as each other, not two that talk.
-- **CPU1/NuttX command dispatch is unverified.** The satellite's CPU2 side
-  just forwards received command bytes raw to CPU1 over IPCC
-  (`M0_Check_And_Forward_Command`) -- whatever NuttX does with them lives
-  in `apps/`, never explored this project. The GS can now send correctly-
-  framed Command packets with the full opcode set, but whether CPU1 acts
-  on anything beyond the base repo's original 5 opcodes is unknown.
-- **No fabricated telemetry defaults** -- this was a real bug, fixed: the
-  base repo seeded `b1_data`/`b2_data` with hardcoded plausible-looking
-  values (4.00V, 25.0°C, 1.00A...) that would transmit forever if CPU1
-  never sent real data. Now zero-initialized (`struct beacon1_ipc_s`/
-  `beacon2_ipc_s`) with `b1_valid`/`b2_valid` flags that only become true
-  once a real IPC packet arrives.
-- **Ring buffer is sheet-exact now, but CPU1 still has to fill it.** The
-  IPC wire format (`beacon1_ipc_s`/`beacon2_ipc_s`, `ipc/Sring_buffer.h`)
-  used to carry only 5 generic scaled-int16 values per beacon, which is
-  why most Beacon1/2 fields were honestly zeroed -- there was nowhere for
-  them to come from even if CPU1 measured them. The struct is now a
-  field-for-field mirror of Beacon1Packet_t/Beacon2Packet_t, so every
-  sheet field has a slot; whether it carries a *real* sensor reading is
-  entirely down to whatever CPU1/NuttX code (`apps/`, unexplored this
-  project) calls `live_telem_update_b1`/`_b2`. No such caller exists yet.
-- **`MASTER.md` is stale** -- still describes the old FX.25/cubus_ax25
-  architecture (pre-swap) and links to docs that no longer exist. Not
-  rewritten yet; ask before trusting it for anything architecture-related.
-- **Beacon2's richer fields have no sensor source.** Per-panel solar
-  voltage/current and gyro/magnetometer would need CPU1-side ADCS work
-  this project didn't touch.
-- **GS-side sheet-aware RX decode.** `gs_main.c`'s `Process_Received_Frame`
-  used to dump every decoded payload as raw ASCII (`c>=32&&c<=126 ? c :
-  '.'`), which is wrong for Beacon1/Beacon2/ACK/Command -- those are
-  binary structs, not text, so they printed as mostly dots.
-  `Print_Decoded_Sheet_Payload` now checks the header byte (`BEACON1_HEAD`/
-  `BEACON2_HEAD`/`ACK_RESPONSE_TYPE_*`/`SAT_ID_S2S2`) and prints real
-  field values (verifying Beacon1/2's CHK_CRC), falling back to the old
-  ASCII dump only for payloads that don't match a known layout.
+Frames on the VCP: PC->CPU1 `C5 x8, A7, cmd, seq(2), total(2), len, data, crc16` (CRC-16/CCITT-FALSE); CPU1->PC
+`A5 5A cmd seq(2) status 0D 0A` (+ `A5 5C seq len data crc16 0D 0A` for READF/INFO). cmds: 02 STATUS (0 = CPU1 up and CPU2
+heartbeat advancing), 03 RESET (clear CPU2 replay floor), 04 new file, 05 STORE, 06 SENDF, 07 READF, 08 SETNAME, 09 INFO.
 
-## Testing pattern
+NuttX (CPU1) build: `cd nuttx && gmake -j6` (needs `brew install make flock`); config: `FS_LITTLEFS=y` with all LittleFS
+size factors = 1 (default 4x = 8 KB buffers -> `ENOMEM` mount failure), `SERIAL_TERMIOS=y`,
+`INIT_ENTRYPOINT="s2s2obc_main"`. `nuttx.bin` must stay below `0x08024000` (page 72); flash with
+`make flash-m4 SERIAL=<probe>` in `Satellite_M0+/Com_sat`.
 
-No on-target test runner -- verify `protocol.c` changes host-side first:
+Proof tools: `tools/testbench/verify_report.py <report dir>` (rebuild from raw GS log), `tools/testbench/flash_proof.py <report dir>`
+(raw SWD dump of the LittleFS pages; stop the bench first, it needs the ST-Link).
 
-```
-clang -std=c11 -Wall -O2 -IMission -Iprotocol -Iprotocol/ax25 \
-  -Iprotocol/g3ruh -IInc -o /tmp/roundtrip \
-  Mission/protocol.c protocol/ax25/ax25.c protocol/ax25/crc16.c \
-  protocol/g3ruh/g3ruh.c your_test.c
-```
-
-Build a real frame with `Protocol_CreatePacket`, decode with
-`Protocol_ExtractFrame`+`Protocol_VerifyPacket`+`Protocol_DecodePayload`,
-and check: clean round-trip, exact-replay rejection, correction up to
-t=16 injected byte errors, correct refusal past t=16. Only flash to real
-hardware after that passes.
+Learned the hard way:
+- `SAT_TX_GAP_MS` (300 ms) and `SAT_ACK_GUARD_MS` (700 ms): the GS prints a full report per frame and loses back-to-back packets.
+- OPEN BUG: `make LOG=0` corrupts the satellite's downlink frames (cause unknown). `LOG=1` is the default.
+- The replay counters are RAM-only: a rebooted GS restarts at 1 and the satellite rejects everything until the `RESET` frame.
+- A GS-commanded `CAM` makes CPU2 read the flash ring; with nothing feeding it the satellite sends zero chunks for minutes.

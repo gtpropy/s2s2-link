@@ -1,0 +1,58 @@
+1791545512.130 RadioApp_Init: ENTER
+1791545512.133 S1
+1791545512.133 S2
+1791545512.133 S3
+1791545512.133 S4
+1791545512.133 RadioApp_Init: Radio.Init done
+1791545512.133 Radio RX = 435000000 Hz
+1791545512.133 Radio TX = 437375000 Hz
+1791545512.184 Bitrate = 4800
+1791545512.185 Deviation = 1200 Hz
+1791545512.185 RadioApp_Init: EXIT
+1791545512.185 ========================================================================
+1791545512.185   ANTARIKCHYA PRATISTHAN NEPAL (APN)  —  S2S-2 GROUND STATION
+1791545512.185   FW-ID: GS-G3RUH-20261006 | RFO_HP +22 dBm | FULL DOWNLINK DECODE
+1791545512.185 ========================================================================
+1791545512.185   Uplink TX       : 437375000 Hz  (437.375 MHz, RFO_HP, +22 dBm)
+1791545512.185   Downlink RX     : 435000000 Hz  (435.000 MHz, CW + GMSK 4800 bps)
+1791545512.185   Downlink framing: 128-bit preamble + sync word 93 0B 51 DE + 200 B
+1791545512.185   Decode pipeline : G3RUH descramble → AX.25 FCS → payload dispatch
+1791545512.244   Payloads        : ACK/NACK, HK 128B, Camera chunks (JPEG reasm.), Flash
+1791545512.245   Packets/command : 2  (single-shot uplink)
+1791545512.245 ========================================================================
+1791545512.245 Ground Station Ready. RX armed on 435.000 MHz.
+1791545512.245 [SEAL] FEC core self-test: PASS (AUTH=1)
+1791545512.245 Type '?' or 'HELP' for command list.
+1791545546.901 > {"type":"CWSIG","on":1,"rssi":-114}
+1791545546.901 [CW] Carrier detected (RSSI -114 dBm)
+1791545547.749 {"type":"CWCAR","ms":846,"rssi":-92}
+1791545547.801 [CW] Tuning carrier: 846 ms (RSSI -92 dBm)
+1791545548.605 {"type":"CWCAR","ms":340,"rssi":-93}
+1791545548.605 [CW] Tuning carrier: 340 ms (RSSI -93 dBm)
+1791545548.979 {"type":"CWCAR","ms":310,"rssi":-92}
+1791545549.034 [CW] Tuning carrier: 310 ms (RSSI -92 dBm)
+1791545549.411 {"type":"CWCAR","ms":310,"rssi":-92}
+1791545549.411 [CW] Tuning carrier: 310 ms (RSSI -92 dBm)
+1791545549.846 {"type":"CWCAR","ms":310,"rssi":-93}
+1791545549.846 [CW] Tuning carrier: 310 ms (RSSI -93 dBm)
+1791545550.167 {"type":"CWCHAR","ch":"E"}
+1791545550.699 E{"type":"CWCHAR","ch":"T"}
+1791545550.964 T{"type":"CWCHAR","ch":"E"}
+1791545551.716 E{"type":"CWCHAR","ch":"S"}
+1791545552.947 S{"type":"CWCHAR","ch":"2"}
+1791545553.431 2{"type":"CWCHAR","ch":"S"}
+1791545554.496 S{"type":"CWCHAR","ch":"2"}
+1791545554.972 2{"type":"CWCHAR","ch":"N"}
+1791545555.239 N{"type":"CWCHAR","ch":"E"}
+1791545556.107 E{"type":"CWCHAR","ch":"P"}
+1791545556.587 P{"type":"CWCHAR","ch":"A"}
+1791545557.280 A{"type":"CWCHAR","ch":"L"}
+1791545557.661 L{"type":"CWSIG","on":0,"rssi":-101}
+1791545557.768 {"type":"CWRX","text":"E TE S2S2NEPAL","callsign":1}
+1791545557.768 [CW DECODED] E TE S2S2NEPAL
+1791545558.037 {"type":"CWSIG","on":1,"rssi":-111}
+1791545558.037 [CW] Carrier detected (RSSI -111 dBm)
+1791545558.831 {"type":"CWCHAR","ch":"4"}
+1791545560.053 4{"type":"CWCHAR","ch":"."}
+1791545561.386 .{"type":"CWCHAR","ch":"0"}
+1791545562.719 0{"type":"CWCHAR","ch":"0"}

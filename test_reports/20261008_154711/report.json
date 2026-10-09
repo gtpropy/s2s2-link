@@ -1,0 +1,86 @@
+{
+  "generated": "2026-10-08T15:47:11",
+  "git": "4c7b8d6",
+  "note": "Run B: Antarikshya logo (PNG converted to JPEG by the bench). Same setup, satellite reset before the test.",
+  "sat_bin": {
+    "bin": 51056,
+    "mtime": 1791451476.2804544,
+    "limit": 57344
+  },
+  "gs_bin": {
+    "bin": 48648,
+    "mtime": 1791449182.489433,
+    "limit": 57344
+  },
+  "results": {
+    "link": {
+      "test": "link",
+      "when": 1791453363.474048,
+      "rows": [
+        {
+          "n": 1,
+          "ok": true,
+          "tries": 9,
+          "latency_ms": 1314,
+          "rssi_avg": -92.5,
+          "frames": 4,
+          "bad_frames": 0,
+          "wrapped_blocks": 4
+        },
+        {
+          "n": 2,
+          "ok": true,
+          "tries": 5,
+          "latency_ms": 1269,
+          "rssi_avg": -91.8,
+          "frames": 4,
+          "bad_frames": 0,
+          "wrapped_blocks": 4
+        },
+        {
+          "n": 3,
+          "ok": true,
+          "tries": 4,
+          "latency_ms": 1254,
+          "rssi_avg": -93.5,
+          "frames": 4,
+          "bad_frames": 0,
+          "wrapped_blocks": 4
+        }
+      ],
+      "passed": 3,
+      "total": 3,
+      "verdict": "PASS"
+    },
+    "image": {
+      "test": "image",
+      "when": 1791453727.6765041,
+      "name": "antarikshya_logo.png",
+      "bytes": 9466,
+      "chunks": 74,
+      "received": 74,
+      "missing": [],
+      "duplicates": 0,
+      "src_sha256": "e4f80ea6dce666b127fe69b95df8878e14135c4abeb9ca07179c94d0f9e9cdcb",
+      "rx_sha256": "e4f80ea6dce666b127fe69b95df8878e14135c4abeb9ca07179c94d0f9e9cdcb",
+      "match": true,
+      "elapsed_s": 161.8,
+      "payload_bps": 766,
+      "first_pass_got": 74,
+      "passes": [
+        {
+          "pass": 1,
+          "got": 74,
+          "tries": 3,
+          "stream_s": 98.9,
+          "missing": []
+        }
+      ],
+      "ring_fed": 74,
+      "rssi_avg": -93.9,
+      "tries": 3,
+      "verdict": "PASS"
+    },
+    "sdr": null
+  }
+}

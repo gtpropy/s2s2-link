@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S2S2 Test Bench</title>
+<style>
+:root{
+  --bg:#0f1318; --panel:#171d25; --panel2:#1d252f; --line:#2a3441; --text:#e6edf3; --mute:#8b98a8;
+  --ok:#3fb950; --bad:#f85149; --warn:#d29922; --acc:#58a6ff; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: light){
+  :root{--bg:#f4f6f8;--panel:#fff;--panel2:#f0f3f6;--line:#d5dce4;--text:#18202a;--mute:#5d6b7b;--ok:#1a7f37;--bad:#cf222e;--warn:#9a6700;--acc:#0969da}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+header h1{font-size:16px;margin:0 8px 0 0;letter-spacing:.3px}
+.chip{display:inline-flex;gap:6px;align-items:center;padding:3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--panel2);font-size:12px;color:var(--mute)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--mute)}
+.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}.dot.warn{background:var(--warn)}.dot.run{background:var(--acc);animation:p 1s infinite}
+@keyframes p{50%{opacity:.3}}
+main{display:grid;grid-template-columns:minmax(320px,1fr) minmax(320px,1fr);gap:16px;padding:16px 20px;max-width:1500px;margin:0 auto}
+@media (max-width:900px){main{grid-template-columns:1fr;padding:12px 16px}}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+section.wide{grid-column:1/-1}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.8px;color:var(--mute);margin:0 0 10px;display:flex;justify-content:space-between;align-items:center}
+label{font-size:12px;color:var(--mute);display:block;margin:6px 0 3px}
+input,select,textarea{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit;max-width:100%}
+input[type=number]{width:80px}
+button{background:var(--acc);color:#fff;border:0;border-radius:6px;padding:7px 14px;font:inherit;font-weight:600;cursor:pointer}
+button.sec{background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+button.danger{background:var(--bad)}
+button:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.verdict{font-weight:800;padding:2px 10px;border-radius:6px;font-size:12px}
+.PASS{background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ok)}
+.FAIL{background:color-mix(in srgb,var(--bad) 20%,transparent);color:var(--bad)}
+.PARTIAL{background:color-mix(in srgb,var(--warn) 20%,transparent);color:var(--warn)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left}
+th{color:var(--mute);font-weight:600;font-size:12px}
+.mono{font-family:var(--mono);font-size:12px}
+.bar{height:8px;background:var(--panel2);border-radius:4px;overflow:hidden;border:1px solid var(--line)}
+.bar>i{display:block;height:100%;background:var(--acc)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(14px,1fr));gap:2px;margin:8px 0}
+.grid i{height:14px;border-radius:2px;background:var(--panel2);border:1px solid var(--line)}
+.grid i.store{background:var(--acc);border-color:var(--acc)}
+.grid i.read{background:#2dd4bf;border-color:#2dd4bf}
+.grid i.ack{background:var(--warn);border-color:var(--warn)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{border-radius:0;background:var(--panel2);color:var(--text);padding:6px 10px;font-weight:500}
+.seg button.on{background:var(--acc);color:#fff}
+.stages{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
+.stage{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px}
+.stage b{display:block;font-size:12px;margin-bottom:2px}
+.stage .bar{margin:6px 0 4px}
+.stage.active{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc) inset}
+.led{display:inline-block;width:14px;height:14px;border-radius:50%;vertical-align:-2px;margin-right:6px;background:#444;border:1px solid var(--line)}
+.led.BLUE{background:#3b82f6;box-shadow:0 0 8px #3b82f6}.led.GREEN{background:#22c55e;box-shadow:0 0 8px #22c55e}
+.led.YELLOW{background:#eab308;box-shadow:0 0 8px #eab308}
+.grid i.on{background:var(--ok);border-color:var(--ok)}
+.imgs{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.imgs figure{margin:0;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px;text-align:center}
+.imgs img{max-width:100%;max-height:260px;background:repeating-conic-gradient(#8883 0 25%,#0000 0 50%) 0 0/16px 16px}
+.imgs figcaption{font-size:12px;color:var(--mute);margin-top:4px}
+.logs{height:300px;overflow:auto;background:#0b0f14;color:#c9d4df;border-radius:8px;padding:8px 10px;font:12px/1.5 var(--mono);white-space:pre-wrap;word-break:break-all}
+.logs .ok{color:#56d364}.logs .err{color:#ff7b72}.logs .warn{color:#e3b341}.logs .gs{color:#79c0ff}
+.tabs{display:flex;gap:6px;margin-bottom:8px}
+.tabs button{padding:4px 12px;font-size:12px}
+.tabs button.on{background:var(--acc);color:#fff;border:0}
+.hint{font-size:12px;color:var(--mute);margin:6px 0 0}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:13px}
+.kv b{color:var(--mute);font-weight:500}
+</style>
+</head>
+<body>
+<header>
+  <h1>S2S2 Test Bench</h1>
+  <span class="chip"><i class="dot" id="d-gs"></i><span id="t-gs">GS serial</span></span>
+  <span class="chip"><i class="dot" id="d-sat"></i><span id="t-sat">Nucleo VCP</span></span>
+  <span class="chip"><i class="dot" id="d-sdr"></i><span id="t-sdr">SDR</span></span>
+  <span class="chip"><i class="dot" id="d-run"></i><span id="t-run">idle</span></span>
+  <span class="chip" id="t-git">git</span>
+  <span style="flex:1"></span>
+  <button class="danger" id="stop" disabled>Stop test</button>
+</header>
+
+<main>
+  <section>
+    <h2>1 · Connections &amp; firmware</h2>
+    <label>Ground station (FTDI)</label>
+    <div class="row">
+      <select id="port" style="min-width:230px"></select>
+      <input id="baud" type="number" value="115200" style="width:90px">
+      <button id="connect">Connect GS</button>
+    </div>
+    <label>Nucleo = ST-Link virtual COM port (<span class="mono">/dev/cu.usbmodem*</span>, no serial number needed)</label>
+    <div class="row">
+      <select id="vcp" style="min-width:230px"></select>
+      <button id="vcpconnect">Connect Nucleo</button>
+      <button class="sec" id="satreset" title="RESET frame over the VCP: clears the satellite's replay floor">Reset satellite state</button>
+    </div>
+    <div class="kv" style="margin-top:10px">
+      <b>Satellite image</b><span id="satbin" class="mono">–</span>
+      <b>GS image</b><span id="gsbin" class="mono">–</span>
+    </div>
+    <details style="margin-top:8px"><summary class="hint" style="cursor:pointer">Build / flash (flashing needs the ST-Link serial numbers)</summary>
+      <div class="row">
+        <div><label>Satellite ST-Link serial</label><input id="satprobe" class="mono" size="26" value="002E00354741500120383733"></div>
+        <div><label>GS ST-Link serial</label><input id="gsprobe" class="mono" size="26" value="303030303030303030303031"></div>
+        <button class="sec" id="refresh" style="align-self:end">Detect probes / SDR</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="sec" data-build="sat">Build sat</button><button class="sec" data-flash="sat">Flash sat</button>
+        <button class="sec" data-build="gs">Build GS</button><button class="sec" data-flash="gs">Flash GS</button>
+      </div>
+    </details>
+    <p class="hint">The satellite only listens ~50 s of every ~95 s (CW beacon phase), so tests wait for it and retry.</p>
+  </section>
+
+  <section>
+    <h2>Image via SDR + Direwolf <span id="v-sdrimage"></span></h2>
+    <div class="row">
+      <label style="margin:0">SDR frequency (MHz)</label><input id="sdrimg-freq" type="text" value="434.9936" style="width:100px">
+      <label style="margin:0">gain</label><input id="sdrimg-gain" type="number" value="40" min="0" max="50" style="width:60px">
+      <button data-run="sdrimage">Send the selected image, decode with SDR + Direwolf</button>
+    </div>
+    <p class="hint">Proof without the ground station: the Nucleo sends the image selected above, the RTL-SDR + <b>Direwolf</b> (a stock decoder, none of our code) receives it, and the bench checks every frame Direwolf delivers: AX.25 addresses, control/PID, the camera fragment of the Packet Format sheet (type 0x08, CRC-16/X.25) and that the picture rebuilt from those fragments is byte-identical to the image sent. The frequency is where <i>your dongle</i> sees the 435.000 MHz signal (its clock error shifts it; 434.9936 for the dongle used so far).</p>
+    <div id="sdrimage-out"></div>
+  </section>
+
+  <section>
+    <h2>CW HELLO test (spectrum analyzer) <span id="v-cwtest"></span></h2>
+    <div class="row">
+      <label style="margin:0">seconds</label><input id="cw-secs" type="number" value="3600" min="5" max="43200">
+      <button data-run="cwtest">Send HELLO continuously</button>
+      <button data-run="cwtest" data-mode="gmsk">Send HELLO as GMSK packets</button>
+    </div>
+    <p class="hint">The satellite keys <b>HELLO</b> in Morse on its downlink frequency, <b>435.000 MHz</b>, over and over: 1 s steady carrier, HELLO (80 ms dit, 240 ms dah), 1.5 s quiet, about 9 s per round. On a TinySA set centre 435 MHz with a narrow span (or zero span) to see the keying; the ground station also decodes it. Stop ends it early; it ends by itself after the time shown. A CW beacon that is already running finishes first (up to ~37 s).</p>
+    <div id="cwtest-out"></div>
+  </section>
+
+  <section>
+    <h2>Raw rate test <span id="v-rate"></span></h2>
+    <div class="row">
+      <label style="margin:0">packets per run</label><input id="rate-n" type="number" value="60" min="5" max="300">
+      <label style="margin:0">gaps (ms)</label><input id="rate-gaps" type="text" value="300,100,50,20,0" style="width:150px">
+      <button data-run="rate">Run raw rate test</button>
+    </div>
+    <p class="hint">The satellite (CPU2) sends N packets straight from the radio, with the chosen pause between them (0 = back to back): no flash, no ring buffer, no CW beacon, no per-packet PA sequencing. The GS goes silent and only counts. <b>air rate</b> = what the modem really sustains (200 bytes per packet, from the satellite's own start-to-end time); <b>payload rate</b> = only the 128 file bytes of each packet; <b>lost</b> = packets the GS did not receive. A beacon due during the test is late by up to the length of one run.</p>
+    <div id="rate-out"></div>
+  </section>
+
+  <section>
+    <h2>2 · Link test <span id="v-link"></span></h2>
+    <div class="row">
+      <label style="margin:0">PINGs</label><input id="link-n" type="number" value="5" min="1" max="50">
+      <button data-run="link">Run link test</button>
+    </div>
+    <p class="hint">GS → satellite PING. Pass = ACK accepted + wrapped PING reply + ACK completed decoded on the GS, 3 frames each time.</p>
+    <div id="link-out"></div>
+  </section>
+
+  <section class="wide">
+    <h2>3 · Image downlink test <span id="v-image"></span></h2>
+    <div class="row">
+      <select id="sample" style="min-width:260px"></select>
+      <button class="sec" id="pick">Use this file</button>
+      <label class="sec" style="margin:0;cursor:pointer;display:inline-block;padding:6px 12px;border:1px solid var(--line);border-radius:6px">Upload…
+        <input id="file" type="file" hidden></label>
+      <div class="seg" id="fitseg" title="what to do with the file before sending">
+        <button data-v="none">keep file as it is</button><button class="on" data-v="flash">compress to fit CPU1 flash (≤44 KB)</button><button data-v="quick">quick demo ≤10 KB</button>
+      </div>
+      <div class="seg" id="modeseg" title="how the file reaches the radio">
+        <button class="on" data-v="store">via CPU1 flash (LittleFS)</button>
+      </div>
+      <button data-run="image" id="sendimg" disabled>Send image to the Nucleo</button>
+      <label style="margin:0;display:flex;gap:6px;align-items:center" title="reads the real LED pins (GPIOB) through the Nucleo's ST-Link while the test runs; uses the satellite ST-Link serial from the Build/flash box"><input type="checkbox" id="ledtrace" checked> record LED pins over SWD</label>
+    </div>
+    <div id="img-info" class="hint">No file selected. Nothing is built in: the bench sends exactly the file you pick, byte for byte (unless you tick "shrink").</div>
+    <p class="hint">① the PC sends the file chunk by chunk to <b>CPU1</b> (NuttX), which stores it as a file on <b>LittleFS in CPU1's internal flash</b> (LED <span style="color:#3b82f6">blue</span>) → ② the PC reads every chunk back from that file and compares (LED <span style="color:#22c55e">green</span>) → ③ CPU1 reads each chunk from the file into the <b>shared ring buffer</b> (green), CPU2 takes it from the ring and transmits it over RF (<span style="color:#eab308">yellow</span>) and CPU1 answers <span class="mono">A5 5A 06 &lt;seq&gt; &lt;status&gt; 0D 0A</span>; the bench checks the GS printed it (re-sending if not).
+    Grid: <span style="color:#3b82f6">■</span> stored <span style="color:#2dd4bf">■</span> read back <span style="color:#d29922">■</span> transmitted <span style="color:#3fb950">■</span> received by the GS</p>
+    <div class="stages">
+      <div class="stage" id="st-write"><b><i class="led BLUE"></i>① CPU1 writes file to its flash</b><div class="bar"><i id="b-write" style="width:0"></i></div><span id="n-write">–</span></div>
+      <div class="stage" id="st-read"><b><i class="led GREEN"></i>② read back from CPU1 flash</b><div class="bar"><i id="b-read" style="width:0"></i></div><span id="n-read">–</span></div>
+      <div class="stage" id="st-tx"><b><i class="led YELLOW"></i>③ CPU1 flash → ring → CPU2 → RF → GS</b><div class="bar"><i id="b-tx" style="width:0"></i></div><span id="n-tx">–</span></div>
+    </div>
+    <div class="hint" id="ledline">Nucleo LED now: <i class="led" id="ledcur"></i><span id="ledtxt">idle</span></div>
+    <div class="row" style="margin-top:8px"><div class="bar" style="flex:1"><i id="img-bar" style="width:0"></i></div><span id="img-prog" class="mono">0 / 0</span></div>
+    <div class="grid" id="chunkgrid"></div>
+    <div class="imgs">
+      <figure><img id="img-src" alt=""><figcaption>sent to the Nucleo <span id="sha-src" class="mono"></span></figcaption></figure>
+      <figure><img id="img-rx" alt=""><figcaption>received over the air <span id="sha-rx" class="mono"></span></figcaption></figure>
+    </div>
+    <div id="image-out"></div>
+  </section>
+
+  <section>
+    <h2>4 · SDR + Direwolf <span id="v-sdr"></span></h2>
+    <div class="row">
+      <label style="margin:0">MHz</label><input id="freq" type="number" step="0.001" value="435.000" style="width:100px">
+      <label style="margin:0">gain</label><input id="gain" type="number" value="40">
+      <label style="margin:0">PINGs</label><input id="sdr-n" type="number" value="3" min="1" max="20">
+      <button data-run="sdr">Run SDR test</button>
+    </div>
+    <p class="hint">Needs the coax split to the RTL-SDR. rtl_fm → Direwolf (G3RUH 4800) decodes the satellite's frames independently of the GS. If the SDR stalls, unplug and replug it.</p>
+    <div id="sdr-out"></div>
+  </section>
+
+  <section>
+    <h2>5 · Proof report</h2>
+    <label>Note (shows in the report)</label>
+    <textarea id="note" rows="3" style="width:100%" placeholder="setup, antenna/coax, attenuators, who ran it …"></textarea>
+    <div class="row" style="margin-top:8px"><button id="report">Save report</button><span id="report-out" class="hint" style="margin:0"></span></div>
+    <p class="hint">Writes <span class="mono">test_reports/&lt;time&gt;/</span>: report.html (open it to show the result), report.json, source.jpg, received.jpg and the raw GS UART log.</p>
+  </section>
+
+  <section class="wide">
+    <h2>Live log</h2>
+    <div class="tabs"><button class="on" data-tab="ev">Bench</button><button data-tab="gs">GS UART</button><button data-tab="sat">Nucleo VCP</button><button data-tab="sdr">Direwolf</button></div>
+    <div class="logs" id="log"></div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const api = async (p, body) => {
+  const r = await fetch(p, body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+};
+const buf = {ev: [], gs: [], sat: [], sdr: []};
+let tab = 'ev', running = null, imgTotal = 0, curSha = '', autoDone = false;
+
+function esc(s){return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function addLog(which, text, cls){
+  const a = buf[which]; a.push({text, cls}); if (a.length > 1500) a.shift();
+  if (which === tab){ const el = $('#log'); const near = el.scrollTop + el.clientHeight > el.scrollHeight - 40;
+    el.insertAdjacentHTML('beforeend', `<div class="${cls||''}">${esc(text)}</div>`); if (near) el.scrollTop = el.scrollHeight; }
+}
+function renderLog(){ const el = $('#log'); el.innerHTML = buf[tab].map(l => `<div class="${l.cls||''}">${esc(l.text)}</div>`).join(''); el.scrollTop = el.scrollHeight; }
+$$('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; $$('[data-tab]').forEach(x => x.classList.toggle('on', x === b)); renderLog(); });
+
+function setDot(id, cls, text){ const d = $('#d-' + id); d.className = 'dot ' + cls; if (text) $('#t-' + id).textContent = text; }
+function badge(id, v){ $(id).innerHTML = v ? `<span class="verdict ${v}">${v}</span>` : ''; }
+function pct(b){ return b ? `${b.bin.toLocaleString()} B  (${(100*b.bin/b.limit).toFixed(1)} % of ${b.limit.toLocaleString()} B)` : 'not built'; }
+
+async function refresh(fresh){
+  try {
+    const s = await api('/api/status' + (fresh ? '?fresh=1' : ''));
+    const fill = (sel, ports, empty) => { const cur = sel.value; sel.innerHTML = (ports.length ? ports : [empty]).map(p => `<option>${p}</option>`).join(''); if (cur && ports.includes(cur)) sel.value = cur; };
+    fill($('#port'), s.gs.ports, '(no /dev/cu.usbserial-* found)');
+    fill($('#vcp'), s.obc.ports, '(no /dev/cu.usbmodem* found)');
+    if (s.gs.connected){ $('#port').value = s.gs.port; setDot('gs', 'ok', 'GS ' + s.gs.port.split('-').pop()); $('#connect').textContent = 'Disconnect GS'; }
+    else { setDot('gs', 'bad', 'GS not connected'); $('#connect').textContent = 'Connect GS'; }
+    if (s.obc.connected){ $('#vcp').value = s.obc.port; setDot('sat', 'ok', 'Nucleo ' + s.obc.port.replace('/dev/cu.', '')); $('#vcpconnect').textContent = 'Disconnect Nucleo'; }
+    else { setDot('sat', 'bad', 'Nucleo VCP not connected'); $('#vcpconnect').textContent = 'Connect Nucleo'; }
+    if (fresh) $('#t-sat').title = 'ST-Link probes seen: ' + s.probes.join(', ');
+    setDot('sdr', s.sdr.present ? 'ok' : 'warn', s.sdr.present ? 'SDR ready' : 'SDR not found');
+    $('#t-sdr').title = (s.sdr.info || []).join('\n');
+    $('#satbin').textContent = pct(s.sat_build); $('#gsbin').textContent = pct(s.gs_build);
+    $('#t-git').textContent = 'git ' + s.git;
+    if (s.image.bytes){
+      $('#img-info').textContent = `${s.image.name} · ${s.image.bytes.toLocaleString()} B · ${s.image.chunks} chunks · ${s.image.info}`;
+      imgTotal = s.image.chunks; $('#sendimg').disabled = !!s.running;
+      $('#sha-src').textContent = s.image.sha256.slice(0,16) + '…';
+      if (curSha !== s.image.sha256){ curSha = s.image.sha256; $('#img-src').src = '/api/image/source?' + s.image.sha256.slice(0,8); $('#img-rx').removeAttribute('src'); buildGrid(imgTotal); }
+    } else { $('#sendimg').disabled = true; }
+    if ((s.running === 'image' || s.running === 'sdrimage') && s.progress.total){
+      const g = $('#chunkgrid').children;
+      if (g.length !== s.progress.total) buildGrid(s.progress.total);
+      (s.progress.stored || []).forEach(i => { if (g[i] && !g[i].className) g[i].className = 'store'; stage.write.add(i + 1); });
+      (s.progress.read || []).forEach(i => { if (g[i] && g[i].className !== 'on' && g[i].className !== 'ack') g[i].className = 'read'; stage.read.add(i + 1); });
+      s.progress.acked.forEach(i => { if (g[i] && g[i].className !== 'on') g[i].className = 'ack'; });
+      s.progress.got.forEach(i => { if (g[i]) g[i].className = 'on'; });
+      $('#img-prog').textContent = `${s.progress.got.length} / ${s.progress.total}`;
+      $('#img-bar').style.width = (100 * s.progress.got.length / s.progress.total) + '%';
+    }
+    for (const k of ['link','image','sdr','rate','cwtest','sdrimage']) if (s.results[k] && !(k === 'image' && s.running === 'image')) showResult(k, s.results[k]);
+    setRunning(s.running);
+    // one-click setup: connect whatever is plugged in, once
+    if (!autoDone){ autoDone = true;
+      if (!s.gs.connected && s.gs.ports.length) await api('/api/gs/connect', {}).catch(e => addLog('ev', 'auto-connect GS: ' + e.message, 'warn'));
+      if (!s.obc.connected && s.obc.ports.length) await api('/api/obc/connect', {}).catch(e => addLog('ev', 'auto-connect Nucleo: ' + e.message, 'warn'));
+      if (autoDone) setTimeout(() => refresh(false), 300); }
+  } catch(e){ addLog('ev', 'status: ' + e.message, 'err'); }
+}
+
+function setRunning(name){
+  running = name;
+  setDot('run', name ? 'run' : 'ok', name ? 'running: ' + name : 'idle');
+  $$('[data-run],[data-build],[data-flash]').forEach(b => b.disabled = !!name || (b.id === 'sendimg' && !curSha));
+  $('#stop').disabled = !name;
+}
+
+const stage = {write: new Set(), read: new Set(), tx: new Set()};
+let rxWho = 'the GS';
+function paintStages(total, gsGot){
+  const set = (id, n, txt) => { $('#n-' + id).textContent = txt; $('#b-' + id).style.width = (total ? 100 * n / total : 0) + '%'; };
+  set('write', stage.write.size, `${stage.write.size} / ${total} chunks written to the LittleFS file and verified`);
+  set('read', stage.read.size, `${stage.read.size} / ${total} chunks read back from the file and compared`);
+  const g = $$('#chunkgrid .on').length;
+  set('tx', g, `${g} / ${total} received by ${rxWho}`);
+}
+function buildGrid(n){ stage.write.clear(); stage.read.clear(); stage.tx.clear(); paintStages(n, 0); $('#chunkgrid').innerHTML = Array.from({length: n}, () => '<i></i>').join(''); $('#img-prog').textContent = `0 / ${n}`; $('#img-bar').style.width = '0'; }
+
+function showResult(k, r){
+  badge('#v-' + k, r.verdict);
+  const o = $('#' + k + '-out');
+  if (k === 'sdrimage'){
+    if (!r.frames && r.frames !== 0){ o.innerHTML = esc(r.why || ''); }
+    else {
+      const good = r.match;
+      o.innerHTML = `<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start"><div><table>
+        <tr><td>frames delivered by Direwolf</td><td><b>${r.frames}</b></td></tr>
+        <tr><td>valid camera fragments (type 0x08, CRC-16/X.25 ok)</td><td><b>${r.valid} / ${r.fragments}</b>${r.missing && r.missing.length ? ' &middot; missing: ' + r.missing.join(', ') : ''}</td></tr>
+        <tr><td>other frames</td><td>${r.other}</td></tr>
+        <tr><td>AX.25 source -&gt; destination</td><td class="mono">${(r.addresses||[]).map(esc).join('<br>')}</td></tr>
+        <tr><td>control / PID / information bytes</td><td class="mono">${r.control} / ${r.pid} / ${(r.info_lengths||[]).join(', ')}</td></tr>
+        <tr><td>sha256 sent</td><td class="mono">${r.src_sha256}</td></tr>
+        <tr><td>sha256 rebuilt from the Direwolf frames</td><td class="mono">${r.rx_sha256}</td></tr>
+        <tr><td>result</td><td><span class="verdict ${good?'PASS':'FAIL'}">${good ? 'IDENTICAL' : 'DIFFERENT'}</span> &middot; ${r.elapsed_s} s on air</td></tr></table></div>
+        <div><img src="/api/image/received?t=${Math.round(r.when)}" style="max-width:260px;border:1px solid var(--line);border-radius:6px" alt="picture rebuilt from the frames Direwolf decoded"><p class="hint">picture rebuilt from the frames Direwolf decoded</p></div></div>`;
+    }
+  } else if (k === 'cwtest'){ o.innerHTML = r.seconds ? `<p class="hint">sent for ${r.seconds} s · ground station decoded HELLO ${r.gs_decoded_hello} time(s)</p>` : esc(r.why||''); }
+  else if (k === 'rate'){
+    o.innerHTML = r.rows ? `<table><tr><th>gap</th><th>ms / packet</th><th>air rate</th><th>payload rate</th><th>sat sent</th><th>GS got</th><th>lost</th><th>bad</th><th>RSSI</th></tr>` +
+      r.rows.map(x => `<tr><td>${x.gap_ms} ms</td><td>${x.ms_per_packet??''}</td><td><b>${x.air_bps??''}</b> bit/s</td><td>${x.payload_bps??''} bit/s</td><td>${x.sat_sent}/${x.n}</td><td>${x.gs_got}/${x.n}</td><td>${x.loss_pct}%</td><td>${x.gs_bad}</td><td>${x.rssi??''} dBm</td></tr>`).join('') +
+      `</table>` : esc(r.why||'');
+  } else if (k === 'link'){
+    o.innerHTML = r.rows ? `<table><tr><th>#</th><th>result</th><th>tries</th><th>latency</th><th>RSSI</th><th>frames</th></tr>` +
+      r.rows.map(x => `<tr><td>${x.n}</td><td><span class="verdict ${x.ok?'PASS':'FAIL'}">${x.ok?'PASS':'FAIL'}</span>${x.why?' '+esc(x.why):''}</td><td>${x.tries??''}</td><td>${x.latency_ms??''} ms</td><td>${x.rssi_avg??''} dBm</td><td>${x.frames??''}</td></tr>`).join('') +
+      `</table><p class="hint">${r.passed}/${r.total} passed</p>` : esc(r.why||'');
+  } else if (k === 'image'){
+    if (r.received !== undefined){
+      $('#img-prog').textContent = `${r.received} / ${r.chunks}`; $('#img-bar').style.width = (100*r.received/r.chunks) + '%';
+      $('#sha-rx').textContent = r.rx_sha256.slice(0,16) + '…';
+      [...$('#chunkgrid').children].forEach((c, i) => c.className = (r.missing || []).includes(i + 1) ? '' : 'on');
+      $('#img-rx').src = '/api/image/received?' + r.rx_sha256.slice(0,8);
+      o.innerHTML = `<div class="kv"><b>source sha256</b><span class="mono">${r.src_sha256}</span><b>received sha256</b><span class="mono">${r.rx_sha256}</span>
+        ${r.store_info ? `<b>CPU1 file</b><span class="mono">${r.store_info}</span>` : ''}
+        ${r.flash_sha256 ? `<b>flash read-back sha256</b><span class="mono">${r.flash_sha256}</span><b>stored on CPU1 flash</b><span>${r.stored_in_flash}/${r.chunks} chunks programmed · ${r.flash_readback_ok}/${r.chunks} read back identical · <span class="verdict ${r.flash_match?'PASS':'FAIL'}">${r.flash_match?'FLASH == SOURCE':'FLASH != SOURCE'}</span></span>` : ''}
+        <b>match (over the air)</b><span><span class="verdict ${r.match?'PASS':'FAIL'}">${r.match?'IDENTICAL':'DIFFERENT'}</span></span>
+        <b>chunks</b><span>${r.received}/${r.chunks} printed by the GS · ${r.acked} acknowledged by the Nucleo · ${r.retransmits} re-send(s)${r.missing.length?' · missing '+r.missing.slice(0,20).join(',')+(r.missing.length>20?'…':''):''}</span>
+        ${r.led_check ? `<b>LED pins (SWD)</b><span>${Object.entries(r.led_check.phase_check).map(([n, v]) => `${n}: ${v.expected.join('/')} seen ${Math.round(100 * (v.seen_fraction || 0))} %`).join(' · ')}</span>` : ''}
+        <b>time</b><span>${r.elapsed_s} s &nbsp;(${r.payload_bps} bit/s payload) · Nucleo answer avg ${r.ack_ms_avg ?? '?'} ms · RSSI ${r.rssi_avg ?? '?'} dBm</span></div>`;
+    } else o.innerHTML = `<p class="hint">${esc(r.why||'')}</p>`;
+  } else if (k === 'sdr'){
+    o.innerHTML = r.frames ? `<div class="kv"><b>Direwolf frames</b><span>${r.direwolf_frames}</span><b>GS frames (same pings)</b><span>${r.gs_frames}</span>
+      <b>audio level</b><span>${r.audio_level_avg ?? '?'}</span></div><div class="mono" style="margin-top:6px">${r.frames.map(esc).join('<br>')}</div>`
+      : `<p class="hint">${esc(r.why||'')} ${esc((r.detail||[]).join(' | '))}</p>`;
+  }
+}
+
+// events -------------------------------------------------------------------------------
+const es = new EventSource('/events');
+es.onmessage = m => {
+  const e = JSON.parse(m.data);
+  if (e.kind === 'log') addLog('ev', new Date(e.t*1000).toLocaleTimeString() + '  ' + e.msg, e.level === 'info' ? '' : e.level);
+  else if (e.kind === 'gs') addLog('gs', e.msg, 'gs');
+  else if (e.kind === 'sdr') addLog('sdr', e.msg, '');
+  else if (e.kind === 'sat') addLog('sat', e.msg, '');
+  else if (e.kind === 'phase'){ $$('.stage').forEach(x => x.classList.remove('active'));
+    const id = (e.name.startsWith('erase') || e.name.startsWith('write')) ? 'write' : e.name.startsWith('read back') ? 'read' : 'tx'; $('#st-' + id).classList.add('active');
+    const led = e.led.includes('YELLOW') ? 'YELLOW' : e.led.split(' ')[0]; $('#ledcur').className = 'led ' + led; $('#ledtxt').textContent = e.name + ' — ' + e.led; }
+  else if (e.kind === 'chunk'){
+    const c = $('#chunkgrid').children[e.pkt - 1], rank = {store: 1, read: 2, ack: 3, gs: 4};
+    if (c){ const cur = {store: 1, read: 2, ack: 3, on: 4}[c.className] || 0; if (rank[e.src] >= cur) c.className = e.src === 'gs' ? 'on' : e.src; }
+    stage[e.src === 'store' ? 'write' : e.src === 'read' ? 'read' : 'tx'].add(e.pkt);
+    paintStages(e.total, e.src === 'gs' ? e.got : null); }
+  else if (e.kind === 'result') showResult(e.name, e.result);
+  else if (e.kind === 'test') { setRunning(e.state === 'running' ? e.name : null); if (e.state === 'running' && (e.name === 'image' || e.name === 'sdrimage')){ rxWho = e.name === 'sdrimage' ? 'Direwolf (SDR, no GS)' : 'the GS'; buildGrid(imgTotal); } }
+};
+
+// controls -----------------------------------------------------------------------------
+$('#connect').onclick = async () => {
+  try { if ($('#connect').textContent.startsWith('Disconnect')) await api('/api/gs/disconnect', {}); else await api('/api/gs/connect', {port: $('#port').value.startsWith('/dev') ? $('#port').value : '', baud: +$('#baud').value}); }
+  catch(e){ addLog('ev', e.message, 'err'); } refresh(false);
+};
+$('#vcpconnect').onclick = async () => {
+  try { if ($('#vcpconnect').textContent.startsWith('Disconnect')) await api('/api/obc/disconnect', {}); else await api('/api/obc/connect', {port: $('#vcp').value.startsWith('/dev') ? $('#vcp').value : ''}); }
+  catch(e){ addLog('ev', e.message, 'err'); } refresh(false);
+};
+$('#refresh').onclick = () => refresh(true);
+$('#satreset').onclick = () => api('/api/sat/reset', {}).catch(e => addLog('ev', e.message, 'err'));
+$$('[data-build]').forEach(b => b.onclick = () => api('/api/build', {target: b.dataset.build}).catch(e => addLog('ev', e.message, 'err')));
+$$('[data-flash]').forEach(b => b.onclick = () => api('/api/flash', {target: b.dataset.flash, sat_probe: $('#satprobe').value, gs_probe: $('#gsprobe').value}).catch(e => addLog('ev', e.message, 'err')));
+$$('[data-run]').forEach(b => b.onclick = () => {
+  const n = b.dataset.run;
+  const cfg = {name: n, sat_probe: $('#satprobe').value, gs_probe: $('#gsprobe').value};
+  if (n === 'link') cfg.count = +$('#link-n').value;
+  if (n === 'sdrimage'){ cfg.freq_mhz = +$('#sdrimg-freq').value; cfg.gain = +$('#sdrimg-gain').value; cfg.fresh = false; }
+  if (n === 'cwtest'){ cfg.seconds = +$('#cw-secs').value; cfg.fresh = false; cfg.mode = b.dataset.mode || 'cw'; }
+  if (n === 'rate'){ cfg.count = +$('#rate-n').value; cfg.gaps = $('#rate-gaps').value; }
+  if (n === 'sdr'){ cfg.count = +$('#sdr-n').value; cfg.freq_mhz = +$('#freq').value; cfg.gain = +$('#gain').value; }
+  if (n === 'image'){ cfg.mode = seg('#modeseg'); cfg.ledtrace = $('#ledtrace').checked; $('#img-rx').removeAttribute('src'); $('#sha-rx').textContent = ''; $('#image-out').innerHTML = ''; }
+  api('/api/test/start', cfg).catch(e => addLog('ev', e.message, 'err'));
+});
+$('#stop').onclick = () => api('/api/test/stop', {});
+$('#sample').onchange = () => $('#pick').click();
+function seg(id){ const b = document.querySelector(id + ' button.on'); return b ? b.dataset.v : ''; }
+$$('.seg button').forEach(b => b.onclick = () => { b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  if (b.parentElement.id === 'fitseg') api('/api/image/refit', {fit: seg('#fitseg')}).then(() => refresh(false)).catch(() => {}); });   // re-process whatever is loaded (upload or sample), never swap it for the dropdown entry
+$('#pick').onclick = () => api('/api/image/select', {path: $('#sample').value, fit: seg('#fitseg')}).then(() => refresh(false)).catch(e => addLog('ev', e.message, 'err'));
+$('#file').onchange = async ev => {
+  const f = ev.target.files[0]; if (!f) return;
+  const r = await fetch('/api/image/upload?name=' + encodeURIComponent(f.name) + '&fit=' + seg('#fitseg'), {method: 'POST', body: await f.arrayBuffer()});
+  if (!r.ok) addLog('ev', (await r.json()).error, 'err');
+  ev.target.value = '';                                  // lets the same file be picked again after an error
+  refresh(false);
+};
+$('#report').onclick = () => api('/api/report', {note: $('#note').value}).then(j => $('#report-out').textContent = 'saved: ' + j.dir).catch(e => addLog('ev', e.message, 'err'));
+
+(async () => {
+  const s = await api('/api/samples').catch(() => []);
+  $('#sample').innerHTML = s.map(x => `<option>${x}</option>`).join('');
+  refresh(true);
+  setInterval(() => refresh(false), 6000);
+})();
+</script>
+</body>
+</html>

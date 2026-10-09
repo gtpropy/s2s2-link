@@ -1,0 +1,82 @@
+{
+  "generated": "2026-10-08T19:15:41",
+  "git": "4c7b8d6",
+  "note": "after CW-hold fix",
+  "sat_bin": {
+    "bin": 51544,
+    "mtime": 1791465934.9760761,
+    "limit": 57344
+  },
+  "gs_bin": {
+    "bin": 48648,
+    "mtime": 1791464546.6416972,
+    "limit": 57344
+  },
+  "results": {
+    "link": null,
+    "image": {
+      "test": "image",
+      "mode": "store",
+      "when": 1791466210.4148512,
+      "name": "antarikshya_logo.png",
+      "type": "jpg",
+      "bytes": 23406,
+      "chunks": 183,
+      "received": 183,
+      "acked": 183,
+      "missing": [],
+      "stored_in_flash": 183,
+      "flash_readback_ok": 183,
+      "store_info": "/obc/antarikshya_logo.jpg 23406 B on LittleFS (CPU1 flash pages 72..99)",
+      "flash_sha256": "7e992663a2ac35b8b40e26f014ad899d9d296f21baebe9a676f95f14b4572dff",
+      "flash_match": true,
+      "retransmits": 0,
+      "src_sha256": "7e992663a2ac35b8b40e26f014ad899d9d296f21baebe9a676f95f14b4572dff",
+      "rx_sha256": "7e992663a2ac35b8b40e26f014ad899d9d296f21baebe9a676f95f14b4572dff",
+      "match": true,
+      "elapsed_s": 192.6,
+      "payload_bps": 972,
+      "ack_ms_avg": 764,
+      "rssi_avg": -90.3,
+      "led_check": {
+        "samples_transitions": 792,
+        "seconds_in_colour": {
+          "off": 6.6,
+          "BLUE": 30.7,
+          "GREEN": 9.4,
+          "YELLOW": 145.2,
+          "WHITE": 0.1
+        },
+        "phase_check": {
+          "write the file to CPU1 flash (LittleFS)": {
+            "expected": [
+              "BLUE",
+              "CYAN",
+              "MAGENTA",
+              "WHITE"
+            ],
+            "seen_fraction": 0.824
+          },
+          "read back from CPU1 flash": {
+            "expected": [
+              "CYAN",
+              "GREEN",
+              "WHITE"
+            ],
+            "seen_fraction": 0.999
+          },
+          "CPU1 reads flash -> ring buffer -> CPU2 -> RF": {
+            "expected": [
+              "GREEN",
+              "WHITE",
+              "YELLOW"
+            ],
+            "seen_fraction": 0.995
+          }
+        }
+      },
+      "verdict": "PASS"
+    },
+    "sdr": null
+  }
+}

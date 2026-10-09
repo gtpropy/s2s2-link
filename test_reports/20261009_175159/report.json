@@ -1,0 +1,96 @@
+{
+  "generated": "2026-10-09T17:51:59",
+  "git": "4c7b8d6",
+  "note": "raw air rate test, 100 packets per gap",
+  "sat_bin": {
+    "bin": 52108,
+    "mtime": 1791546898.0851626,
+    "limit": 57344
+  },
+  "gs_bin": {
+    "bin": 49248,
+    "mtime": 1791546959.2479858,
+    "limit": 57344
+  },
+  "results": {
+    "link": null,
+    "image": null,
+    "sdr": null,
+    "rate": {
+      "test": "rate",
+      "when": 1791547608.325085,
+      "rows": [
+        {
+          "gap_ms": 300,
+          "n": 100,
+          "status": 0,
+          "sat_sent": 100,
+          "sat_ms": 67100,
+          "air_bps": 2384,
+          "payload_bps": 1526,
+          "ms_per_packet": 671.0,
+          "gs_got": 100,
+          "gs_bad": 0,
+          "gs_rx": 100,
+          "gs_span_ms": 67806,
+          "loss_pct": 0.0,
+          "rssi": -94,
+          "wall_s": 68.6
+        },
+        {
+          "gap_ms": 100,
+          "n": 100,
+          "status": 0,
+          "sat_sent": 100,
+          "sat_ms": 47300,
+          "air_bps": 3382,
+          "payload_bps": 2164,
+          "ms_per_packet": 473.0,
+          "gs_got": 100,
+          "gs_bad": 0,
+          "gs_rx": 100,
+          "gs_span_ms": 48010,
+          "loss_pct": 0.0,
+          "rssi": -94,
+          "wall_s": 75.0
+        },
+        {
+          "gap_ms": 50,
+          "n": 100,
+          "status": 0,
+          "sat_sent": 100,
+          "sat_ms": 42350,
+          "air_bps": 3778,
+          "payload_bps": 2417,
+          "ms_per_packet": 423.5,
+          "gs_got": 100,
+          "gs_bad": 0,
+          "gs_rx": 100,
+          "gs_span_ms": 43052,
+          "loss_pct": 0.0,
+          "rssi": -94,
+          "wall_s": 43.6
+        },
+        {
+          "gap_ms": 0,
+          "n": 100,
+          "status": 0,
+          "sat_sent": 100,
+          "sat_ms": 37413,
+          "air_bps": 4276,
+          "payload_bps": 2737,
+          "ms_per_packet": 374.1,
+          "gs_got": 100,
+          "gs_bad": 0,
+          "gs_rx": 100,
+          "gs_span_ms": 38197,
+          "loss_pct": 0.0,
+          "rssi": -94,
+          "wall_s": 72.5
+        }
+      ],
+      "count": 100,
+      "verdict": "PASS"
+    }
+  }
+}

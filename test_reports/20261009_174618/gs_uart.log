@@ -1,0 +1,44 @@
+1791547124.378 {"type":"RATE","on":1,"rx":0,"bad":0,"uniq":0,"first":0,"last":0,"rssi":0}
+1791547124.986 {"type":"RATE","on":1,"rx":0,"bad":0,"uniq":0,"first":0,"last":0,"rssi":0}
+1791547154.058 {"type":"RATE","on":1,"rx":40,"bad":0,"uniq":40,"first":146815,"last":173530,"rssi":-94}
+1791547154.108 {"type":"RATE","on":0,"rx":40,"bad":0,"uniq":40,"first":146815,"last":173530,"rssi":-94}
+1791547154.576 > {"type":"CWCHAR","ch":"9"}
+1791547154.629 9{"type":"RATE","on":1,"rx":0,"bad":0,"uniq":0,"first":0,"last":0,"rssi":0}
+1791547155.238 {"type":"RATE","on":1,"rx":0,"bad":0,"uniq":0,"first":0,"last":0,"rssi":0}
+1791547202.654 {"type":"RATE","on":1,"rx":40,"bad":0,"uniq":40,"first":203411,"last":222328,"rssi":-94}
+1791547202.713 {"type":"RATE","on":0,"rx":40,"bad":0,"uniq":40,"first":203411,"last":222328,"rssi":-94}
+1791547203.222 > {"type":"RATE","on":1,"rx":0,"bad":0,"uniq":0,"first":0,"last":0,"rssi":0}
+1791547203.833 {"type":"RATE","on":1,"rx":0,"bad":0,"uniq":0,"first":0,"last":0,"rssi":0}
+1791547222.878 {"type":"RATE","on":1,"rx":40,"bad":0,"uniq":40,"first":225652,"last":242617,"rssi":-94}
+1791547222.930 {"type":"RATE","on":0,"rx":40,"bad":0,"uniq":40,"first":225652,"last":242617,"rssi":-94}
+1791547223.429 > {"type":"RATE","on":1,"rx":0,"bad":0,"uniq":0,"first":0,"last":0,"rssi":0}
+1791547224.048 {"type":"RATE","on":1,"rx":0,"bad":0,"uniq":0,"first":0,"last":0,"rssi":0}
+1791547241.869 {"type":"RATE","on":1,"rx":40,"bad":0,"uniq":40,"first":245861,"last":261656,"rssi":-94}
+1791547241.928 {"type":"RATE","on":0,"rx":40,"bad":0,"uniq":40,"first":245861,"last":261656,"rssi":-94}
+1791547242.431 > {"type":"RATE","on":1,"rx":0,"bad":0,"uniq":0,"first":0,"last":0,"rssi":0}
+1791547243.048 {"type":"RATE","on":1,"rx":0,"bad":0,"uniq":0,"first":0,"last":0,"rssi":0}
+1791547260.162 {"type":"RATE","on":1,"rx":40,"bad":0,"uniq":40,"first":264870,"last":279914,"rssi":-94}
+1791547260.219 {"type":"RATE","on":0,"rx":40,"bad":0,"uniq":40,"first":264870,"last":279914,"rssi":-94}
+1791547260.701 > {"type":"CWCHAR","ch":"9"}
+1791547261.150 9{"type":"CWCHAR","ch":"N"}
+1791547261.657 N{"type":"CWCHAR","ch":"S"}
+1791547262.705 S{"type":"CWCHAR","ch":"2"}
+1791547263.218 2{"type":"CWCHAR","ch":"S"}
+1791547264.296 S{"type":"CWCHAR","ch":"2"}
+1791547264.806 2{"type":"CWCHAR","ch":"N"}
+1791547265.031 N{"type":"CWCHAR","ch":"E"}
+1791547265.878 E{"type":"CWCHAR","ch":"P"}
+1791547266.320 P{"type":"CWCHAR","ch":"A"}
+1791547267.056 A{"type":"CWCHAR","ch":"L"}
+1791547267.453 L{"type":"CWSIG","on":0,"rssi":-100}
+1791547267.834 {"type":"CWSIG","on":1,"rssi":-112}
+1791547267.834 [CW] Carrier detected (RSSI -112 dBm)
+1791547268.597 {"type":"CWCHAR","ch":"4"}
+1791547269.835 4{"type":"CWCHAR","ch":"."}
+1791547271.168 .{"type":"CWCHAR","ch":"0"}
+1791547272.475 0{"type":"CWCHAR","ch":"0"}
+1791547273.218 0{"type":"CWCHAR","ch":"V"}
+1791547274.296 V{"type":"CWCHAR","ch":"4"}
+1791547275.508 4{"type":"CWCHAR","ch":"."}
+1791547276.789 .{"type":"CWCHAR","ch":"0"}
+1791547278.151 0{"type":"CWCHAR","ch":"0"}

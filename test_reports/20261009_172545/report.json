@@ -1,0 +1,25 @@
+{
+  "generated": "2026-10-09T17:25:45",
+  "git": "4c7b8d6",
+  "note": "90 s beacon during transfer + VCP auto-reconnect, board 002D",
+  "sat_bin": {
+    "bin": 51568,
+    "mtime": 1791544876.804513,
+    "limit": 57344
+  },
+  "gs_bin": {
+    "bin": 48648,
+    "mtime": 1791467311.509104,
+    "limit": 57344
+  },
+  "results": {
+    "link": null,
+    "image": {
+      "test": "image",
+      "when": 1791546030.2790668,
+      "verdict": "FAIL",
+      "why": "flash readback differs for chunks [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]"
+    },
+    "sdr": null
+  }
+}

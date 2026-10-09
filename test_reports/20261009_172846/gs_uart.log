@@ -1,0 +1,164 @@
+1791546154.437 {"type":"CWCHAR","ch":"1"}
+1791546155.759 1{"type":"CWCHAR","ch":"2"}
+1791546156.143 2{"type":"CWSIG","on":0,"rssi":-100}
+1791546156.251 {"type":"CWRX","text":"9NS2S2NEPAL 1.00A 1.00A 1.00A 1 2","callsign":1}
+1791546156.251 [CW DECODED] 9NS2S2NEPAL 1.00A 1.00A 1.00A 1 2
+1791546156.622 RadioApp_Init: ENTER
+1791546156.625 S1
+1791546156.625 S2
+1791546156.625 S3
+1791546156.625 S4
+1791546156.625 RadioApp_Init: Radio.Init done
+1791546156.625 Radio RX = 435000000 Hz
+1791546156.625 Radio TX = 437375000 Hz
+1791546156.625 Bitrate = 4800
+1791546156.625 Deviation = 1200 Hz
+1791546156.625 RadioApp_Init: EXIT
+1791546156.625 ========================================================================
+1791546156.691   ANTARIKCHYA PRATISTHAN NEPAL (APN)  —  S2S-2 GROUND STATION
+1791546156.691   FW-ID: GS-G3RUH-20261006 | RFO_HP +22 dBm | FULL DOWNLINK DECODE
+1791546156.691 ========================================================================
+1791546156.691   Uplink TX       : 437375000 Hz  (437.375 MHz, RFO_HP, +22 dBm)
+1791546156.691   Downlink RX     : 435000000 Hz  (435.000 MHz, CW + GMSK 4800 bps)
+1791546156.691   Downlink framing: 128-bit preamble + sync word 93 0B 51 DE + 200 B
+1791546156.691   Decode pipeline : G3RUH descramble → AX.25 FCS → payload dispatch
+1791546156.691   Payloads        : ACK/NACK, HK 128B, Camera chunks (JPEG reasm.), Flash
+1791546156.691   Packets/command : 2  (single-shot uplink)
+1791546156.691 ========================================================================
+1791546156.741 Ground Station Ready. RX armed on 435.000 MHz.
+1791546156.741 [SEAL] FEC core self-test: PASS (AUTH=1)
+1791546156.741 Type '?' or 'HELP' for command list.
+1791546172.566 > [GS RX-DIAG] preamble=1 (+1) sync=0 (+0) packets=0 | mode=5 RSSI=-128 dBm
+1791546172.620 [GS RX-DIAG] Preamble without sync word 93 0B 51 DE (normal during CW keying; during GMSK = framing mismatch or weak signal)
+1791546178.531 {"type":"CWSIG","on":1,"rssi":-114}
+1791546178.531 [CW] Carrier detected (RSSI -114 dBm)
+1791546179.378 {"type":"CWCAR","ms":846,"rssi":-93}
+1791546179.433 [CW] Tuning carrier: 846 ms (RSSI -93 dBm)
+1791546179.917 {"type":"CWSIG","on":0,"rssi":-100}
+1791546179.917 {"type":"CWSIG","on":1,"rssi":-112}
+1791546179.972 [CW] Carrier detected (RSSI -112 dBm)
+1791546180.297 {"type":"CWCAR","ms":331,"rssi":-93}
+1791546180.297 [CW] Tuning carrier: 331 ms (RSSI -93 dBm)
+1791546180.717 {"type":"CWCAR","ms":325,"rssi":-92}
+1791546180.718 [CW] Tuning carrier: 325 ms (RSSI -92 dBm)
+1791546181.141 {"type":"CWCAR","ms":315,"rssi":-93}
+1791546181.141 [CW] Tuning carrier: 315 ms (RSSI -93 dBm)
+1791546181.878 {"type":"CWCHAR","ch":"N"}
+1791546182.413 N{"type":"CWCAR","ms":315,"rssi":-93}
+1791546182.413 [CW] Tuning carrier: 315 ms (RSSI -93 dBm)
+1791546182.788 {"type":"CWCHAR","ch":"T"}
+1791546183.374 T{"type":"CWCHAR","ch":"A"}
+1791546183.585 A{"type":"CWCHAR","ch":"E"}
+1791546184.555 E{"type":"CWCAR","ms":310,"rssi":-93}
+1791546184.556 [CW] Tuning carrier: 310 ms (RSSI -93 dBm)
+1791546184.976 {"type":"CWCAR","ms":350,"rssi":-93}
+1791546184.976 [CW] Tuning carrier: 350 ms (RSSI -93 dBm)
+1791546185.405 {"type":"CWCAR","ms":310,"rssi":-93}
+1791546185.405 [CW] Tuning carrier: 310 ms (RSSI -93 dBm)
+1791546186.421 {"type":"CWCHAR","ch":"R"}
+1791546186.849 R{"type":"CWCHAR","ch":"E"}
+1791546187.014 E{"type":"CWCHAR","ch":"E"}
+1791546187.452 E{"type":"CWCHAR","ch":"T"}
+1791546187.879 T{"type":"CWCHAR","ch":"T"}
+1791546188.199 T{"type":"CWCAR","ms":310,"rssi":-92}
+1791546188.199 [CW] Tuning carrier: 310 ms (RSSI -92 dBm)
+1791546188.839 {"type":"CWCAR","ms":335,"rssi":-93}
+1791546188.839 [CW] Tuning carrier: 335 ms (RSSI -93 dBm)
+1791546189.158 {"type":"CWCHAR","ch":"E"}
+1791546189.639 E{"type":"CWCHAR","ch":"T"}
+1791546190.342 T{"type":"CWCAR","ms":315,"rssi":-93}
+1791546190.342 [CW] Tuning carrier: 315 ms (RSSI -93 dBm)
+1791546190.713 {"type":"CWCAR","ms":310,"rssi":-92}
+1791546190.766 [CW] Tuning carrier: 310 ms (RSSI -92 dBm)
+1791546191.029 {"type":"CWCHAR","ch":"E"}
+1791546191.510 E{"type":"CWCHAR","ch":"E"}
+1791546191.777 E{"type":"CWCAR","ms":310,"rssi":-93}
+1791546191.829 [CW] Tuning carrier: 310 ms (RSSI -93 dBm)
+1791546192.315 {"type":"CWCHAR","ch":"E"}
+1791546192.693 E{"type":"CWCAR","ms":310,"rssi":-93}
+1791546192.693 [CW] Tuning carrier: 310 ms (RSSI -93 dBm)
+1791546193.234 {"type":"CWCHAR","ch":"M"}
+1791546193.611 M{"type":"CWSIG","on":0,"rssi":-100}
+1791546193.716 {"type":"CWRX","text":"N T AE R EETT E T E E EM","callsign":0}
+1791546193.716 [CW DECODED] N T AE R EETT E T E E EM
+1791546194.583 {"type":"CWSIG","on":1,"rssi":-112}
+1791546194.583 [CW] Carrier detected (RSSI -112 dBm)
+1791546194.802 {"type":"CWCHAR","ch":"E"}
+1791546195.827 E{"type":"CWCAR","ms":305,"rssi":-93}
+1791546195.827 [CW] Tuning carrier: 305 ms (RSSI -93 dBm)
+1791546196.359 {"type":"CWCHAR","ch":"E"}
+1791546196.682 E{"type":"CWCAR","ms":310,"rssi":-93}
+1791546196.682 [CW] Tuning carrier: 310 ms (RSSI -93 dBm)
+1791546197.279 {"type":"CWCAR","ms":305,"rssi":-94}
+1791546197.334 [CW] Tuning carrier: 305 ms (RSSI -94 dBm)
+1791546197.979 {"type":"CWCAR","ms":330,"rssi":-93}
+1791546197.979 [CW] Tuning carrier: 330 ms (RSSI -93 dBm)
+1791546198.621 {"type":"CWCAR","ms":350,"rssi":-93}
+1791546198.621 [CW] Tuning carrier: 350 ms (RSSI -93 dBm)
+1791546198.994 {"type":"CWCAR","ms":310,"rssi":-93}
+1791546199.045 [CW] Tuning carrier: 310 ms (RSSI -93 dBm)
+1791546199.471 {"type":"CWCAR","ms":305,"rssi":-93}
+1791546199.471 [CW] Tuning carrier: 305 ms (RSSI -93 dBm)
+1791546199.900 {"type":"CWCAR","ms":355,"rssi":-93}
+1791546199.951 [CW] Tuning carrier: 355 ms (RSSI -93 dBm)
+1791546200.327 {"type":"CWCAR","ms":335,"rssi":-93}
+1791546200.327 [CW] Tuning carrier: 335 ms (RSSI -93 dBm)
+1791546200.975 {"type":"CWCAR","ms":310,"rssi":-93}
+1791546200.975 [CW] Tuning carrier: 310 ms (RSSI -93 dBm)
+1791546201.401 {"type":"CWCAR","ms":375,"rssi":-93}
+1791546201.401 [CW] Tuning carrier: 375 ms (RSSI -93 dBm)
+1791546201.786 {"type":"CWCAR","ms":310,"rssi":-92}
+1791546201.843 [CW] Tuning carrier: 310 ms (RSSI -92 dBm)
+1791546202.217 {"type":"CWCAR","ms":310,"rssi":-93}
+1791546202.217 [CW] Tuning carrier: 310 ms (RSSI -93 dBm)
+1791546202.745 {"type":"CWCHAR","ch":"T"}
+1791546203.177 T{"type":"CWCHAR","ch":"E"}
+1791546203.339 E{"type":"CWCHAR","ch":"E"}
+1791546203.553 E{"type":"CWCHAR","ch":"E"}
+1791546203.985 E{"type":"CWCHAR","ch":"T"}
+1791546204.356 T{"type":"CWSIG","on":0,"rssi":-100}
+1791546204.567 {"type":"CWSIG","on":1,"rssi":-112}
+1791546204.623 [CW] Carrier detected (RSSI -112 dBm)
+1791546205.749 {"type":"CWCAR","ms":315,"rssi":-93}
+1791546205.749 [CW] Tuning carrier: 315 ms (RSSI -93 dBm)
+1791546206.282 {"type":"CWCHAR","ch":"E"}
+1791546206.704 E{"type":"CWCHAR","ch":"T"}
+1791546206.921 T{"type":"CWCHAR","ch":"E"}
+1791546207.297 E{"type":"CWCHAR","ch":"T"}
+1791546207.510 T{"type":"CWCHAR","ch":"E"}
+1791546207.834 E{"type":"CWCAR","ms":315,"rssi":-93}
+1791546207.886 [CW] Tuning carrier: 315 ms (RSSI -93 dBm)
+1791546208.473 {"type":"CWCAR","ms":325,"rssi":-93}
+1791546208.474 [CW] Tuning carrier: 325 ms (RSSI -93 dBm)
+1791546208.900 {"type":"CWCAR","ms":315,"rssi":-93}
+1791546208.954 [CW] Tuning carrier: 315 ms (RSSI -93 dBm)
+1791546209.323 {"type":"CWCAR","ms":310,"rssi":-93}
+1791546209.323 [CW] Tuning carrier: 310 ms (RSSI -93 dBm)
+1791546209.800 {"type":"CWCAR","ms":355,"rssi":-93}
+1791546209.800 [CW] Tuning carrier: 355 ms (RSSI -93 dBm)
+1791546210.175 {"type":"CWCAR","ms":335,"rssi":-93}
+1791546210.227 [CW] Tuning carrier: 335 ms (RSSI -93 dBm)
+1791546210.812 {"type":"CWCAR","ms":350,"rssi":-92}
+1791546210.812 [CW] Tuning carrier: 350 ms (RSSI -92 dBm)
+1791546211.191 {"type":"CWCAR","ms":355,"rssi":-93}
+1791546211.242 [CW] Tuning carrier: 355 ms (RSSI -93 dBm)
+1791546211.667 {"type":"CWCHAR","ch":"T"}
+1791546212.097 T{"type":"CWCHAR","ch":"T"}
+1791546212.527 T{"type":"CWCHAR","ch":"T"}
+1791546212.897 T{"type":"CWCHAR","ch":"E"}
+1791546213.653 E{"type":"CWCAR","ms":310,"rssi":-93}
+1791546213.653 [CW] Tuning carrier: 310 ms (RSSI -93 dBm)
+1791546214.134 {"type":"CWSIG","on":0,"rssi":-100}
+1791546214.307 {"type":"CWSIG","on":1,"rssi":-114}
+1791546214.307 [CW] Carrier detected (RSSI -114 dBm)
+1791546215.379 {"type":"CWCHAR","ch":"2"}
+1791546216.073 2{"type":"CWCHAR","ch":"5"}
+1791546217.296 5{"type":"CWCHAR","ch":"."}
+1791546218.646 .{"type":"CWCHAR","ch":"0"}
+1791546219.437 0{"type":"CWCHAR","ch":"C"}
+1791546220.771 C{"type":"CWCHAR","ch":"2"}
+1791546221.512 2{"type":"CWCHAR","ch":"5"}
+1791546222.732 5{"type":"CWCHAR","ch":"."}
+1791546224.070 .{"type":"CWCHAR","ch":"0"}
+1791546224.871 0{"type":"CWCHAR","ch":"C"}
+1791546226.206 C{"type":"CWCHAR","ch":"2"}

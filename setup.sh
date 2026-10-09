@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # setup.sh -- one-time environment setup for building/flashing/running
-# the S2S2 JC2 firmware + Python tooling on a fresh machine (macOS or
+# the S2S2 CPU2 firmware + Python tooling on a fresh machine (macOS or
 # Linux). Run once per machine: `./setup.sh`.
 #
 # What this fixes, concretely (found while debugging real build
 # failures on this exact repo, not guessed):
-#   1. JC2/Makefile used to hardcode ARM_TOOLCHAIN_BIN to a macOS-only
+#   1. Makefile used to hardcode ARM_TOOLCHAIN_BIN to a macOS-only
 #      absolute path (/Applications/ArmGNUToolchain/15.3.rel1/...) --
 #      broke on every other machine. The Makefile now looks for
 #      `arm-none-eabi-gcc` on PATH first, or a `.toolchain_path` file
@@ -23,7 +23,7 @@
 #   3. No `compile_flags.txt` existed anywhere, so clangd/any IDE
 #      couldn't resolve stm32wlxx_hal.h etc even when the STM32CubeWL
 #      SDK was genuinely present on disk. This script runs
-#      `make compile_flags` (JC2/Makefile) to generate/refresh it,
+#      `make compile_flags` (Makefile) to generate/refresh it,
 #      derived from the Makefile's own CFLAGS so it can't drift.
 #   4. A stray CPATH-family env var (seen: a Python installer setting
 #      CPATH globally) leaks host headers into the cross-compile; the
@@ -44,7 +44,7 @@
 # exact path it expects and the page to get it from instead of guessing.
 # Also does not build CPU1 (NuttX) by default -- kconfig-frontends is
 # offered as an interactive opt-in near the end, since most work on
-# this repo is JC2-only and that build is a separate, heavier step.
+# this repo is CPU2-only and that build is a separate, heavier step.
 #
 # Written for portability across bash versions (macOS ships bash 3.2)
 # -- no associative arrays, no empty-array expansion under `set -u`.
@@ -62,7 +62,7 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-JC2_DIR="$REPO_ROOT/JC2"
+FW_DIR="$REPO_ROOT/Satellite_M0+/Com_sat"
 CHECK_ONLY=0
 [ "${1:-}" = "--check" ] && CHECK_ONLY=1
 
@@ -114,7 +114,7 @@ test_toolchain_real_build() {
   local bin_dir="$1"
   local extra=""
   [ -n "$bin_dir" ] && extra="ARM_TOOLCHAIN_BIN=$bin_dir"
-  ( cd "$JC2_DIR" && make $extra clean >/dev/null 2>&1 && make $extra sat-debug >/dev/null 2>&1 )
+  ( cd "$FW_DIR" && make $extra clean >/dev/null 2>&1 && make $extra >/dev/null 2>&1 )
 }
 
 test_toolchain_version_only() {
@@ -133,11 +133,11 @@ TOOLCHAIN_OK=0
 # --check reports the tool that's actually in effect, not a stale
 # "PATH works" that's really passing because the pin masks it.
 EXISTING_PIN=""
-[ -f "$JC2_DIR/.toolchain_path" ] && EXISTING_PIN="$(cat "$JC2_DIR/.toolchain_path")"
+[ -f "$FW_DIR/.toolchain_path" ] && EXISTING_PIN="$(cat "$FW_DIR/.toolchain_path")"
 
 if [ -n "$EXISTING_PIN" ]; then
   if [ "$CUBEWL_PRESENT" = 1 ] && test_toolchain_real_build "$EXISTING_PIN"; then
-    ok "pinned toolchain (JC2/.toolchain_path) builds this project: $EXISTING_PIN"
+    ok "pinned toolchain (.toolchain_path) builds this project: $EXISTING_PIN"
     TOOLCHAIN_OK=1
   elif [ "$CUBEWL_PRESENT" = 0 ] && test_toolchain_version_only "$EXISTING_PIN/arm-none-eabi-gcc"; then
     warn "pinned toolchain present, can't real-build-test without the SDK above: $EXISTING_PIN"
@@ -207,10 +207,10 @@ fi
 
 if [ "$CHECK_ONLY" != 1 ]; then
   if [ -n "$TOOLCHAIN_BIN_DIR" ]; then
-    printf '%s' "$TOOLCHAIN_BIN_DIR" > "$JC2_DIR/.toolchain_path"
-    echo "  wrote JC2/.toolchain_path -> $TOOLCHAIN_BIN_DIR"
+    printf '%s' "$TOOLCHAIN_BIN_DIR" > "$FW_DIR/.toolchain_path"
+    echo "  wrote .toolchain_path -> $TOOLCHAIN_BIN_DIR"
   else
-    rm -f "$JC2_DIR/.toolchain_path"  # PATH version is good (or nothing worked); don't pin a stale override
+    rm -f "$FW_DIR/.toolchain_path"  # PATH version is good (or nothing worked); don't pin a stale override
   fi
 fi
 
@@ -278,7 +278,7 @@ confirm() {
 # Linux-only: ST-Link USB permissions (udev rules) + serial port group
 # membership. The single biggest real-world Linux gotcha for this repo
 # -- without these, every st-flash/openocd/JTAG command and every
-# JC2/tools/*.py serial connection needs sudo, since USB/tty device
+# tools/*.py serial connection needs sudo, since USB/tty device
 # nodes are root-owned by default. macOS/homebrew's stlink cask needs
 # neither (its access model is already user-level), which is why this
 # section is Linux-only.
@@ -324,7 +324,7 @@ EOF
   elif [ "$CHECK_ONLY" = 1 ]; then
     fail "$USER not in 'dialout' group -- opening the Nucleo's debug UART will need sudo until fixed"
   else
-    echo "  Without this, JC2/tools/*.py (or a plain screen/minicom) can't open the"
+    echo "  Without this, tools/*.py (or a plain screen/minicom) can't open the"
     echo "  Nucleo's /dev/ttyACM0-style debug UART without sudo."
     if confirm "Add $USER to the 'dialout' group (needs sudo; requires logout/login to take effect)?"; then
       sudo usermod -aG dialout "$USER"
@@ -369,7 +369,7 @@ else
 fi
 
 # =====================================================================
-# Python tooling (JC2/tools/*.py)
+# Python tooling (tools/*.py)
 # =====================================================================
 
 step "Python tooling"
@@ -379,16 +379,16 @@ else
   if ! command -v python3 >/dev/null 2>&1; then
     fail "python3 not found -- install it first (brew install python3 / apt install python3)"
   else
-    VENV_DIR="$JC2_DIR/tools/.venv"
+    VENV_DIR="$REPO_ROOT/tools/.venv"
     if [ ! -d "$VENV_DIR" ]; then
       python3 -m venv "$VENV_DIR"
     fi
     # shellcheck disable=SC1091
     source "$VENV_DIR/bin/activate"
     pip install --quiet --upgrade pip
-    pip install --quiet -r "$JC2_DIR/tools/requirements.txt"
+    pip install --quiet -r "$REPO_ROOT/tools/requirements.txt"
     deactivate
-    ok "venv ready at JC2/tools/.venv (activate it: source JC2/tools/.venv/bin/activate)"
+    ok "venv ready at tools/.venv (activate it: source tools/.venv/bin/activate)"
   fi
 fi
 
@@ -399,12 +399,12 @@ fi
 
 step "compile_flags.txt (clangd / IDE header resolution)"
 if [ "$CHECK_ONLY" = 1 ]; then
-  [ -f "$JC2_DIR/compile_flags.txt" ] && ok "exists" || fail "missing -- run without --check"
+  [ -f "$FW_DIR/compile_flags.txt" ] && ok "exists" || fail "missing -- run without --check"
 else
   EXTRA=""
-  [ -f "$JC2_DIR/.toolchain_path" ] && EXTRA="ARM_TOOLCHAIN_BIN=$(cat "$JC2_DIR/.toolchain_path")"
-  if ( cd "$JC2_DIR" && make $EXTRA compile_flags ); then
-    ok "wrote JC2/compile_flags.txt"
+  [ -f "$FW_DIR/.toolchain_path" ] && EXTRA="ARM_TOOLCHAIN_BIN=$(cat "$FW_DIR/.toolchain_path")"
+  if ( cd "$FW_DIR" && make $EXTRA compile_flags ); then
+    ok "wrote compile_flags.txt"
   else
     fail "failed to generate compile_flags.txt"
   fi
@@ -425,7 +425,7 @@ if command -v kconfig-tweak >/dev/null 2>&1 && command -v kconfig-mconf >/dev/nu
 elif [ "$CHECK_ONLY" = 1 ]; then
   warn "kconfig-tweak/kconfig-mconf not found (only matters if you plan to build CPU1/NuttX)"
 else
-  if confirm "Build+install kconfig-frontends from source (github.com/patacongo/tools) -- only needed for CPU1/NuttX, skip if you're only working on JC2?"; then
+  if confirm "Build+install kconfig-frontends from source (github.com/patacongo/tools) -- only needed for CPU1/NuttX, skip if you're only working on CPU2?"; then
     if [ "$PLATFORM" = linux ] && command -v apt-get >/dev/null 2>&1; then
       sudo apt-get install -y build-essential gperf flex bison libncurses5-dev \
         pkg-config autoconf automake libtool
@@ -446,7 +446,7 @@ else
       fail "kconfig-frontends build failed -- see https://github.com/patacongo/tools for manual steps"
     fi
   else
-    warn "skipped -- fine if you're only building JC2, needed before building CPU1"
+    warn "skipped -- fine if you're only building CPU2, needed before building CPU1"
   fi
 fi
 
@@ -460,7 +460,7 @@ fi
 
 step "Known gotchas (read once, nothing to run here)"
 
-echo "  * \"#warning user to provide its board definitions pins\" during every JC2"
+echo "  * \"#warning user to provide its board definitions pins\" during every CPU2"
 echo "    build (target/radio_board_if.h): this is expected and harmless. It's a"
 echo "    stock STM32CubeMX-generated placeholder that fires whenever USE_BSP_DRIVER"
 echo "    is undefined -- this project defines pins directly elsewhere instead of"
@@ -475,7 +475,7 @@ echo "    link address) -- on a board previously used with a different CPU2 imag
 echo "    a different flash offset (e.g. an ST demo), it can be stale, and CPU2 just"
 echo "    stays held in reset forever with no error. This is PER-BOARD state in the"
 echo "    chip's own option bytes, not per-machine -- setup.sh can't detect or fix it"
-echo "    without a board connected. If you hit this: JC2/tools/boot_cpu2.cfg is a"
+echo "    without a board connected. If you hit this: tools/boot_cpu2.cfg is a"
 echo "    ready-made OpenOCD script that rewrites SBRV correctly (one-time per"
 echo "    board); it needs real dual-core SWD-DAP access, i.e. interface/stlink-dap.cfg"
 echo "    with 'transport select dapdirect_swd' and 'set DUAL_CORE 1' -- plain"
@@ -486,7 +486,7 @@ echo
 echo "  * Building CPU1 (NuttX OBC, cd nuttx && make) can silently pick up a"
 echo "    different, broken arm-none-eabi-gcc than the one this script just"
 echo "    verified: NuttX's own build system reads plain PATH, it does NOT consult"
-echo "    JC2/.toolchain_path. If \`make\` inside nuttx/ fails with something like"
+echo "    .toolchain_path. If \`make\` inside nuttx/ fails with something like"
 echo "    \"math.h: No such file\" deep in libc, run \`which arm-none-eabi-gcc\` first --"
 echo "    if it's Homebrew's (/opt/homebrew or /usr/local) rather than the ARM GNU"
 echo "    Toolchain cask, put the cask's bin dir earlier in PATH before building CPU1."
@@ -504,9 +504,9 @@ echo "    hit this, you're in NuttX's own build-system territory, not this repo'
 step "Next steps"
 echo "  Build + flash satellite:  cd JC2 && make flash_sat"
 echo "  Build + flash GS:         cd JC2 && make flash_gs"
-echo "  Same via TUI:              python3 JC2/tools/flasher.py   (after: source JC2/tools/.venv/bin/activate)"
-echo "  Mission control dashboard: python3 JC2/tools/mission_control_api.py"
-echo "  S2S2 Test Suite (web GUI): python3 JC2/tools/s2s2_test_suite.py"
+echo "  Same via TUI:              python3 tools/flasher.py   (after: source tools/.venv/bin/activate)"
+echo "  Mission control dashboard: python3 tools/mission_control_api.py"
+echo "  S2S2 Test Suite (web GUI): python3 tools/s2s2_test_suite.py"
 echo "  Build CPU1 (NuttX OBC):    cd nuttx && ./tools/configure.sh nucleo-wl55jc:demo && make -j4"
 echo "  Re-check without changing anything: ./setup.sh --check"
 if [ "$PLATFORM" = linux ]; then
