@@ -296,3 +296,38 @@ GS 49,248 B, nuttx.bin 141,852 B. A rate test blocks the CPU2 loop (and so the 9
 - Verified: both images build for AUTH=TRUE and FALSE (satellite 46,700 / 45,392 B, GS 44,388 / 43,644 B); host tests (`make test`) and the
   tag-function emulator test pass; the satellite was flashed from the new tree and its boot self-test word reads `0xA5A50001`.
   Not re-tested on air: the GS ST-Link is not connected, so the GS image was not flashed.
+
+## 17. Digipeater and AFSK1200 modem (2026-10-10)
+
+- **Digipeater engine** `cpu2/common/digipeater` (pure C, no hardware): New-N path rules (own call, alias, `WIDE2-N` with trace), H-bit loop check, duplicate
+  cache (source + destination + info, 30 s), per-station interval, token bucket, size check, reason codes and counters. Researched against Dire Wolf's
+  `digipeat_match` / `dedupe`, aprsdigi, the AX.25 digipeater description, the PACSAT discussion and APRS practice; full write-up in `docs/DIGIPEATER.md`.
+- **Satellite integration**: a decoded frame with a digipeater path and a good FCS goes to the engine instead of the command logic; a repeat is re-framed with
+  `Protocol_CreateRawPacket()` (new; `Protocol_CreatePacket` was split into build + `Protocol_EncodeClean`, binary unchanged) and sent on 435.000 MHz after a 300 ms
+  guard. `DIGI=TRUE|FALSE` and the limits are TUI settings (`S2S2_DIGI_*` in `generated/s2s2_config.h`). Cost: +5.1 KB, satellite 51,888 B = 90.5 % of the 56 KB.
+  GS console: `DIGI SRC>DEST,VIA:text` sends a test frame (`GS_Send_Raw_Frame`, `GS_Transmit_Frame` split out of `GS_Send_Burst_Packet`).
+- **AFSK1200 modem** `cpu2/common/modem`: the receiver chain of the supplied paper (FIR, decimate x4, I/Q correlators, discriminator, PLL, DCD, majority vote,
+  NRZI, HDLC, CRC residue) and a DDS transmitter, integer only. Not part of the CPU2 images (no ADC / DAC / VHF front end on the Nucleo); it is the software modem for a
+  1200 baud VHF digipeater and is tested on the host. Corrections to the paper: the correlator window must be one bit (8 samples), not 32 (0 of 29 clean frames
+  decoded with 32), and the CRC residue is 0xF0B8.
+- **Tests** (`make test`): `test_digipeater` (4,067 checks), `test_afsk` (loopback, SNR sweep, clock error, noise), `afsk_direwolf.sh` (our modem against Dire Wolf both ways),
+  `digi_chain.sh` (sender packet -> satellite framing -> engine -> repeat -> 4800 bit/s G3RUH audio -> Dire Wolf decodes the repeats). On the chip: `g_digiSelfTest` = `0xA5A50002`.
+- **Not done**: no over-the-air digipeat yet (the GS image with the `DIGI` command is built but not flashed: its ST-Link is not connected).
+
+## 18. Store-and-forward digipeater with hop budget (2026-10-10)
+
+- **Store and forward** (`cpu2/common/digipeater/saf.{h,c}`): every frame the digipeater accepts is kept (12 messages), sent again later (`max_forwards` 3, `forward_interval` 15 min, `ttl` 6 h;
+  all TUI settings) with hop-budget priority; the hop budget is the `WIDEn-N` of the stored path (`Digi_HopsLeft`); hopping across nodes is bounded by that budget and the loop check
+  (`tests/host/test_saf.c`, three-node chain). Not the other meaning of hopping (radio frequency hopping, LR-FHSS): not implemented.
+- **Flash**: CPU1 keeps a journal `/obc/saf.jrn` on its LittleFS (`apps/examples/s2s2obc/s2s2obc_saf.c`), CPU2 talks to it through a SRAM2 mailbox (`cpu2/satellite/ipc/saf_shared.h`,
+  `0x20008000`, one writer per field). Records are CRC-protected and appended with `fsync`; compaction at boot and past 16 KB; the image-store clean-up keeps `saf.*`.
+  `nuttx.bin` 144,204 of 147,456 bytes.
+- **Test path**: VCP commands `0x0C` (status / list / clear) and `0x0D` (inject a frame as if received) and `tools/testbench/saf_tool.py`.
+- **Satellite image** 54,580 B = 95.2 % of 56 KB (+2.7 KB for store and forward, 2.7 KB free). `DIGI=FALSE` removes all of it.
+- **Verified**: host tests (`make test`: 53 store-and-forward checks), the digipeater and stored messages on the air through the SDR + Dire Wolf, journal survives a full reflash and is
+  restored into CPU2, stored messages are sent again (`docs/proof/saf_digipeater_direwolf.txt`). Not verified: reception of a frame over the air by the satellite (GS not flashed).
+
+## 19. AFSK1200 modem removed, GMSK only (2026-10-10)
+
+`cpu2/common/modem` (AFSK1200 software modem after the "AFSK APRS Digipeater" paper), `test_afsk`, `afsk_tool` and `afsk_direwolf.sh` are gone (archive `../s2s2-link_removed_afsk_2026-10-10.tar.gz`).
+The digipeater runs on the satellite's GMSK 4800 bit/s G3RUH path only; `docs/DIGIPEATER.md` section 3 now describes that. The chain test (`digi_chain.sh`) still decodes the repeats with Dire Wolf at 4800 bit/s G3RUH.

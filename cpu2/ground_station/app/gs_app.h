@@ -156,6 +156,7 @@ uint32_t GS_GetTimeMs(void);
 void     GS_StartRx(void);
 
 /* 4. Telecommand Transmission */
+bool GS_Send_Raw_Frame(const uint8_t *body, uint16_t len);   /* complete AX.25 frame body, see gs_app.c */
 bool GS_Send_Packet(const uint8_t *payload, uint16_t len);
 bool GS_Send_Telecommand(uint8_t mcu_id, const uint8_t opcode[3],
                          uint16_t data_id, uint32_t addr, uint16_t count);

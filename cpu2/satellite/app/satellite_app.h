@@ -213,6 +213,7 @@ void Satellite_Run_GMSK_Burst_Session_Ex(uint32_t cycle,
 /* 6. Granular Packet Transmission (Delays & timeouts sent from main) */
 bool Satellite_Send_Packet(const uint8_t *payload, uint16_t len);
 bool Satellite_Send_Packet_Timeout(const uint8_t *payload, uint16_t len, uint32_t timeout_ms);
+bool Satellite_Send_Raw_Frame(const uint8_t *body, uint16_t len);   /* complete AX.25 frame body, see satellite_app.c */
 bool Satellite_Send_AX25_String(const char *text);
 bool Satellite_Send_AX25_String_Timeout(const char *text, uint32_t timeout_ms);
 

@@ -1011,6 +1011,25 @@ bool Satellite_Send_Packet_Timeout(const uint8_t *payload, uint16_t len, uint32_
     return res;
 }
 
+/* ADDED: transmit a complete AX.25 frame body (digipeater): path rewritten by the engine, FCS computed here, no integrity
+ * trailer because the frame belongs to another station. Same PA / switch handling as every other GMSK packet. */
+bool Satellite_Send_Raw_Frame(const uint8_t *body, uint16_t len) {
+    if (!body || len == 0) return false;
+    Satellite_GMSK_Prepare();
+    uint16_t frame_size = Protocol_CreateRawPacket(s_burst_scrambled, body, len);
+    if (frame_size == 0) {
+        uart1_puts("ERROR: digipeater frame does not fit the radio packet\r\n");
+        Satellite_GMSK_AfterTx();
+        return false;
+    }
+    memcpy(last_tx_scrambled, s_burst_scrambled, frame_size);
+    last_tx_len = frame_size;
+    bool res = Radio_Send_And_Wait(s_burst_scrambled, frame_size, (s_config.txTimeoutMs > 0) ? s_config.txTimeoutMs : 3000);
+    Satellite_GMSK_AfterTx();
+    CPU2_Delay_Ms(SAT_TX_GAP_MS);
+    return res;
+}
+
 bool Satellite_Send_Packet(const uint8_t *payload, uint16_t len) {
     return Satellite_Send_Packet_Timeout(payload, len, s_config.txTimeoutMs);
 }

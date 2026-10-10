@@ -10,7 +10,8 @@
 #
 # Targets: all (default) | flash | size | clean | probes | c2boot | flash-m4 | compile_flags
 # Options come from the generated .mk of the configuration (make configure, TUI), command line wins:
-#   AUTH=TRUE|FALSE  DEBUG=T|F  FRONTEND=NUCLEO|CUSTOM (satellite)  LOG=1|0 (satellite)  TIMER_IF_USE_RTC=0|1  SERIAL=<probe>
+#   AUTH=TRUE|FALSE  DEBUG=T|F  FRONTEND=NUCLEO|CUSTOM (satellite)  LOG=1|0 (satellite)  DIGI=TRUE|FALSE (satellite)
+#   TIMER_IF_USE_RTC=0|1  SERIAL=<probe>
 # ============================================================================
 
 COMMON  := ../common
@@ -84,8 +85,16 @@ endif
 
 TIMER_IF_USE_RTC ?= 0
 
+# DIGI=TRUE (default): the satellite digipeater (cpu2/common/digipeater + app/satellite_digi.c); the satellite Makefile adds the sources
+DIGI ?= TRUE
+ifneq ($(filter F FALSE 0 N NO f false n no,$(DIGI)),)
+  DIGI_ON = 0
+else
+  DIGI_ON = 1
+endif
+
 # The options are -D flags, not tracked per object: when they change, all objects are deleted.
-BUILD_OPTS := $(AUTH_EFFECTIVE)-$(DEBUG_ON)-$(TIMER_IF_USE_RTC)-$(TARGET_OPTS)
+BUILD_OPTS := $(AUTH_EFFECTIVE)-$(DEBUG_ON)-$(TIMER_IF_USE_RTC)-$(DIGI_ON)-$(TARGET_OPTS)
 ifneq ($(BUILD_OPTS),$(shell cat $(BUILD)/.opts 2>/dev/null))
   $(shell mkdir -p $(BUILD); find $(BUILD) -name '*.o' -delete; echo '$(BUILD_OPTS)' > $(BUILD)/.opts)
 endif
@@ -162,14 +171,14 @@ ALL_OBJS = $(call objof,$(C_SRCS) $(S_SRCS))
 INCLUDES = \
 	-I. -Iapp -Imission -Iboard -Isystem -Iradio -Iuart -Iipc -I$(GEN_DIR) \
 	-I$(COMMON) -I$(COMMON)/protocol -I$(COMMON)/protocol/ax25 -I$(COMMON)/protocol/g3ruh \
-	-I$(COMMON)/system/include -I$(COMMON)/system \
+	-I$(COMMON)/system/include -I$(COMMON)/system -I$(COMMON)/digipeater \
 	-I$(COMMON)/vendor/st_radio \
 	-I$(COMMON)/vendor/stm32wlxx_hal -I$(COMMON)/vendor/stm32wlxx_hal/Inc \
 	-I$(COMMON)/drivers/subghz -I$(COMMON)/drivers/bsp -I$(COMMON)/ipc \
 	-I$(COMMON)/vendor/st_utilities \
 	-I$(COMMON)/vendor/cmsis/Device/ST/STM32WLxx/Include -I$(COMMON)/vendor/cmsis/Core/Include
 
-CFLAGS = $(CPU) $(OPT_FLAGS) $(AUTH_DEFINE) -DTIMER_IF_USE_RTC=$(TIMER_IF_USE_RTC) $(TARGET_DEFINES) $(FRONTEND_DEFINE) $(LOG_DEFINE) \
+CFLAGS = $(CPU) $(OPT_FLAGS) $(AUTH_DEFINE) -DTIMER_IF_USE_RTC=$(TIMER_IF_USE_RTC) -DDIGI_ENABLE=$(DIGI_ON) $(TARGET_DEFINES) $(FRONTEND_DEFINE) $(LOG_DEFINE) \
 	-MMD -MP -Wall -Wextra -g -fdata-sections -ffunction-sections \
 	-DUSE_HAL_DRIVER -DSTM32WL55xx -DCORE_CM0PLUS $(INCLUDES)
 ASFLAGS = $(CPU) -g $(AUTH_DEFINE)

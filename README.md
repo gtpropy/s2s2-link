@@ -11,7 +11,7 @@ make                 # menuconfig-style TUI: configure everything, build, memory
 make configure       # no UI: generate generated/{s2s2_config.h, s2s2.mk, secrets.h} from .s2s2.config
 make build           # build the selected targets        make flash   # flash CPU2 of the selected targets
 make testbench       # link / image / SDR + Direwolf test GUI (http://127.0.0.1:8765)
-make test            # host tests (framing + integrity check)
+make test            # host tests (framing, integrity check, digipeater, store and forward, Dire Wolf cross-check)
 ```
 
 The TUI (`tools/config`) is the single place for all settings: targets, AUTH, build options, call signs, SSIDs,
@@ -30,6 +30,7 @@ cpu2/                       CPU2 (Cortex-M0+) radio firmware
     system/                 startup glue, trace, memory, low power, sequencer, mini_printf, headers
     drivers/                SubGHz SPI driver, Nucleo board headers
     ipc/                    shared-RAM ring buffer (CPU1 <-> CPU2)
+    digipeater/             APRS / AX.25 digipeater engine + store-and-forward memory (pure logic, see docs/DIGIPEATER.md)
     vendor/                 ST code: CMSIS, STM32WL HAL, SX126x radio driver, ST utilities
     cpu2.mk                 shared build rules, options, flash recipes
   satellite/                satellite image: app/ mission/ board/ system/ radio/ uart/ ipc/ boot/ + Makefile
@@ -52,4 +53,4 @@ Per image: `app/` is the application, `mission/` the mission protocol and radio 
 glue, `system/` interrupt / clock / timer glue, `radio/` the SX126x driver glue, `uart/` the console, `ipc/` the CPU1
 link, `boot/` startup code and linker script. Build outputs go to `build/` inside each image directory.
 
-Details of what was changed against the reference firmware: `docs/CHANGES.md`. Project notes: `CLAUDE.md`.
+Digipeater: `docs/DIGIPEATER.md`. Details of what was changed against the reference firmware: `docs/CHANGES.md`. Project notes: `CLAUDE.md`.

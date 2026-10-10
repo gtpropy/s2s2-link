@@ -43,6 +43,7 @@
  */
 
 #include "gs_app.h"
+#include "digipeater.h"
 #include "s2s2_config.h"
 #include "ll_port.h"
 #include <stdio.h>
@@ -1126,17 +1127,9 @@ RBI_Switch_TypeDef GS_GetRFSwitch(void) { return s_config.rfSwitchConfig; }
 /* ============================================================================
  * UPLINK SEND  — single-shot, clamps burst_count to GS_SEND_COUNT = 1
  * ========================================================================== */
-bool GS_Send_Burst_Packet(const uint8_t *payload, uint16_t len, uint8_t burst_count)
+/* transmit the packet already built in s_tx_frame (burst_count times) and re-arm the receiver */
+static bool GS_Transmit_Frame(uint16_t tx_frame_len, uint8_t burst_count)
 {
-    if (!payload || len == 0) return false;
-    burst_count = (burst_count > 0) ? burst_count : GS_SEND_COUNT;
-
-    uint16_t tx_frame_len = Protocol_CreatePacket(s_tx_frame, payload, len, &s_config.radio);
-    if (tx_frame_len == 0) {
-        uart2_puts("!!! [TX ERROR] Protocol_CreatePacket failed\r\n");
-        return false;
-    }
-
     /* Show unscrambled AX.25 frame */
     uint8_t ax25_clean[AX25_MAX_FRAME_SIZE];
     uint16_t ax25_len = Protocol_GetLastTxAx25Frame(ax25_clean, sizeof(ax25_clean));
@@ -1187,6 +1180,32 @@ bool GS_Send_Burst_Packet(const uint8_t *payload, uint16_t len, uint8_t burst_co
     /* Re-arm receiver on downlink frequency immediately after TX */
     GS_StartRx();
     return true;
+}
+
+
+bool GS_Send_Burst_Packet(const uint8_t *payload, uint16_t len, uint8_t burst_count)
+{
+    if (!payload || len == 0) return false;
+    burst_count = (burst_count > 0) ? burst_count : GS_SEND_COUNT;
+
+    uint16_t tx_frame_len = Protocol_CreatePacket(s_tx_frame, payload, len, &s_config.radio);
+    if (tx_frame_len == 0) {
+        uart2_puts("!!! [TX ERROR] Protocol_CreatePacket failed\r\n");
+        return false;
+    }
+    return GS_Transmit_Frame(tx_frame_len, burst_count);
+}
+
+/* ADDED: send a complete AX.25 frame (any source, destination and digipeater path) -- test traffic for the satellite digipeater.
+ * body = destination, source, via path, control, PID, information (no flags, no FCS). No integrity trailer: it is not a command. */
+bool GS_Send_Raw_Frame(const uint8_t *body, uint16_t len)
+{
+    uint16_t tx_frame_len = Protocol_CreateRawPacket(s_tx_frame, body, len);
+    if (tx_frame_len == 0) {
+        uart2_puts("!!! [TX ERROR] frame does not fit the radio packet\r\n");
+        return false;
+    }
+    return GS_Transmit_Frame(tx_frame_len, 1);
 }
 
 bool GS_Send_Packet(const uint8_t *payload, uint16_t len)
@@ -1266,6 +1285,7 @@ void GS_Print_Help(void)
     uart2_puts("  D ADDR CNT      : Flash data request (hex addr, decimal count)\r\n");
     uart2_puts("  P / PING        : Ping OBC\r\n");
     uart2_puts("  ADCS / EPDM    : Subsystem telecommands\r\n");
+    uart2_puts("  DIGI SRC>DEST,VIA:text : send one UI frame with that path (test the satellite digipeater)\r\n");
     uart2_puts("  BURST           : 50-packet GMSK burst test (0x01)\r\n");
     uart2_puts("  S               : Status\r\n");
     uart2_puts("  AUTO ON|OFF     : Periodic automatic HK1\r\n");
@@ -1403,6 +1423,18 @@ void GS_Handle_Command_Line(const char *p)
             (uint8_t)((cnt  >>  8) & 0xFF), (uint8_t)(cnt  & 0xFF)
         };
         SEND13(flash_cmd);
+    }
+    /* DIGI SRC>DEST,VIA,VIA:text -- one UI frame with that path, for testing the satellite digipeater, e.g.
+     *   DIGI K1ABC>APRS,ARISS:hello      DIGI K1ABC>APRS,WIDE2-2:!4237.14N/07120.83W-test */
+    else if (strncmp(u, "DIGI ", 5) == 0) {
+        uint8_t body[DIGI_MAX_BODY];
+        uint16_t bl = Digi_FromTnc2(p + 5, body, sizeof(body));
+        if (bl == 0) {
+            uart2_puts("usage: DIGI SRC>DEST,VIA1,VIA2:text   (call signs A-Z 0-9, SSID -0..-15, '*' marks the last used via)\r\n");
+        } else {
+            uart2_printf(">>> [UPLINK] DIGI test frame (%u bytes): %s\r\n", bl, p + 5);
+            GS_Send_Raw_Frame(body, bl);
+        }
     }
     /* Antenna deployment */
     else if (strcmp(u, "ANT") == 0 || strcmp(u, "ANTENNA") == 0) {

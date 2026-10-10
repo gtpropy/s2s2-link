@@ -20,6 +20,9 @@
 #include "radio_driver.h"
 #include "protocol.h"
 #include "seal_wrap.h"
+#if DIGI_ENABLE
+#include "satellite_digi.h"
+#endif
 #include "ax25.h"
 #include "g3ruh.h"
 
@@ -676,6 +679,9 @@ int main(void) {
     /* 1. Low-level CPU2 hardware, clock, and RF switch init */
     Satellite_Hardware_Init();
     Satellite_Init(NULL);
+#if DIGI_ENABLE
+    Sat_Digi_Init();                 /* engine configuration from the generated config + rule self-test (g_digiSelfTest) */
+#endif
     IPCC_Handshake();
 
     const SatelliteConfig_t *cfg = Satellite_GetConfig();
@@ -921,6 +927,16 @@ int main(void) {
                     Print_Hex_Bytes(s_rx_decoded, decoded_len);
                     Print_AX25_Fields("G3RUH DECODED FRAME", s_rx_decoded, decoded_len);
 
+#if DIGI_ENABLE
+                    /* -------------------------------------------------------------
+                     * DIGIPEATER: a frame with a digipeater path is somebody else's traffic, not a command
+                     * ------------------------------------------------------------- */
+                    if (Sat_Digi_Handle(s_rx_decoded, decoded_len, HAL_GetTick())) {
+                        RadioApp_StartRx();
+                        break;
+                    }
+#endif
+
                     /* -------------------------------------------------------------
                      * STEP 3: VALIDATE AX.25 FRAME (FCS, UI headers, Callsigns)
                      * ------------------------------------------------------------- */
@@ -1127,6 +1143,12 @@ int main(void) {
                 if (app_state == STATE_DOWNLINK) {
                     break;
                 }
+
+#if DIGI_ENABLE
+                /* store-and-forward: journal traffic with CPU1, injected test frames, stored messages going out again.
+                 * No transmission while a command is served or when the next beacon starts in less than 4 s. */
+                Sat_Digi_Service(now, !s_cmd_service_active && ((uint32_t)(now - s_beacon_start_tick) + 4000UL < SAT_BEACON_PERIOD_MS));
+#endif
 
                 /* 5. Check 90-second listen window expiration */
                 bool hold_active = (s_cmd_service_active || (s_last_cmd_time_ms != 0 && (now - s_last_cmd_time_ms < SAT_CMD_HOLD_TIME_MS)));

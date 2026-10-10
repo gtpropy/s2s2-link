@@ -252,68 +252,14 @@ uint16_t Protocol_GetLastTxAx25Frame(uint8_t *outFrame, uint16_t maxLen)
     return len;
 }
 
-uint16_t Protocol_CreatePacket(
+/*
+ * Bit-level half of the transmit chain: s_clean = flag | body | FCS | flag  ->  HDLC bit stuffing, leading / closing flags,
+ * NRZI, G3RUH scrambler, padded to the fixed radio packet. Returns RADIO_FIXED_PACKET_LEN or 0 if the frame does not fit.
+ */
+static uint16_t Protocol_EncodeClean(
     uint8_t *output,
-    const uint8_t *payload,
-    uint16_t payloadLength,
-    const RadioConfig_t *cfg)
+    uint16_t cleanLen)
 {
-    if (output == NULL ||
-        cfg == NULL)
-    {
-        return 0;
-    }
-
-    /*
-     * AUTH=TRUE: short payloads (<= SEAL_MAX_PAYLOAD) get a 12-byte trailer (counter + tag), see seal_wrap.h.
-     * Longer payloads are sent as they are.
-     */
-#if AUTH_ENABLE
-    static uint8_t s_sealWire[SEAL_MAX_PAYLOAD + SEAL_AUTH_TRAILER];
-    if (payload != NULL && payloadLength <= SEAL_MAX_PAYLOAD)
-    {
-        uint16_t w = Seal_Wrap(payload, payloadLength, s_sealWire);
-        if (w == 0)
-        {
-            return 0;
-        }
-        payload = s_sealWire;
-        payloadLength = w;
-    }
-#endif
-
-    /*
-     * ========================================================
-     * STEP 1
-     *
-     * Build ordinary AX.25 frame into static buffer to prevent stack overflow.
-     * ========================================================
-     */
-
-    uint16_t cleanLen = 0;
-
-    if (AX25_BuildFrame(
-            s_clean,
-            sizeof(s_clean),
-            &cleanLen,
-            cfg->destCallsign,
-            cfg->destSSID,
-            cfg->sourceCallsign,
-            cfg->sourceSSID,
-            payload,
-            payloadLength) != AX25_OK)
-    {
-        return 0;
-    }
-
-    if (cleanLen <
-        AX25_MinFrameLength())
-    {
-        return 0;
-    }
-
-    s_cleanLen = cleanLen;
-
     /*
      * ========================================================
      * STEP 2
@@ -492,6 +438,99 @@ uint16_t Protocol_CreatePacket(
     }
 
     return RADIO_FIXED_PACKET_LEN;
+}
+
+uint16_t Protocol_CreatePacket(
+    uint8_t *output,
+    const uint8_t *payload,
+    uint16_t payloadLength,
+    const RadioConfig_t *cfg)
+{
+    if (output == NULL ||
+        cfg == NULL)
+    {
+        return 0;
+    }
+
+    /*
+     * AUTH=TRUE: short payloads (<= SEAL_MAX_PAYLOAD) get a 12-byte trailer (counter + tag), see seal_wrap.h.
+     * Longer payloads are sent as they are.
+     */
+#if AUTH_ENABLE
+    static uint8_t s_sealWire[SEAL_MAX_PAYLOAD + SEAL_AUTH_TRAILER];
+    if (payload != NULL && payloadLength <= SEAL_MAX_PAYLOAD)
+    {
+        uint16_t w = Seal_Wrap(payload, payloadLength, s_sealWire);
+        if (w == 0)
+        {
+            return 0;
+        }
+        payload = s_sealWire;
+        payloadLength = w;
+    }
+#endif
+
+    /*
+     * ========================================================
+     * STEP 1
+     *
+     * Build ordinary AX.25 frame into static buffer to prevent stack overflow.
+     * ========================================================
+     */
+
+    uint16_t cleanLen = 0;
+
+    if (AX25_BuildFrame(
+            s_clean,
+            sizeof(s_clean),
+            &cleanLen,
+            cfg->destCallsign,
+            cfg->destSSID,
+            cfg->sourceCallsign,
+            cfg->sourceSSID,
+            payload,
+            payloadLength) != AX25_OK)
+    {
+        return 0;
+    }
+
+    if (cleanLen <
+        AX25_MinFrameLength())
+    {
+        return 0;
+    }
+
+    s_cleanLen = cleanLen;
+
+    return Protocol_EncodeClean(output, cleanLen);
+}
+
+/*
+ * Same as Protocol_CreatePacket() but for a frame that is already complete: body = destination, source, 0..8 digipeater
+ * addresses, control, PID, information (no flags, no FCS). The FCS is computed here. Used by the digipeater, which re-emits
+ * received frames with a rewritten path and must not touch their source, destination or payload. No integrity trailer is
+ * added: the frame belongs to somebody else.
+ */
+uint16_t Protocol_CreateRawPacket(
+    uint8_t *output,
+    const uint8_t *body,
+    uint16_t bodyLength)
+{
+    if (output == NULL || body == NULL ||
+        bodyLength < 16U || bodyLength > (uint16_t)(sizeof(s_clean) - 4U))
+    {
+        return 0;
+    }
+
+    s_clean[0] = AX25_FLAG;
+    memcpy(&s_clean[1], body, bodyLength);
+    uint16_t crc = (uint16_t)~AX25_CalculateCRC(&s_clean[1], bodyLength);
+    s_clean[1U + bodyLength] = (uint8_t)(crc & 0xFFU);
+    s_clean[2U + bodyLength] = (uint8_t)(crc >> 8);
+    s_clean[3U + bodyLength] = AX25_FLAG;
+    s_cleanLen = (uint16_t)(bodyLength + 4U);
+
+    return Protocol_EncodeClean(output, s_cleanLen);
 }
 
 /*

@@ -52,6 +52,11 @@ DEFAULT_CONFIG = {
     "project": "S2S2", "sat_call": "9N2SJ", "sat_ssid": 1, "gs_call": "GROUND", "gs_ssid": 0,
     # radio and timing
     "downlink_hz": 435000000, "uplink_hz": 437375000, "cw_unit_ms": 60, "beacon_period_s": 90,
+    # digipeater (satellite): repeats other stations' AX.25 UI frames, see docs/DIGIPEATER.md
+    "digi": True, "digi_alias": "ARISS", "digi_wide": True, "digi_max_n": 2, "digi_trace": True,
+    "digi_dedupe_s": 30, "digi_rate_per_min": 6, "digi_burst": 2, "digi_src_min_s": 10,
+    # store-and-forward: keep repeated frames (journal in CPU1 flash) and send them again later, hop budget from the WIDEn-N path
+    "saf": True, "saf_immediate": True, "saf_max_fwd": 3, "saf_fwd_interval_s": 900, "saf_ttl_min": 360,
     # probes
     "sat_serial": "", "gs_serial": "",
 }
@@ -83,6 +88,18 @@ def validate_config(cfg):
         errs.append("CW unit must be 20-200 ms")
     if not (isinstance(cfg["beacon_period_s"], int) and 30 <= cfg["beacon_period_s"] <= 600):
         errs.append("beacon period must be 30-600 s")
+    if cfg["digi_alias"] and not re.fullmatch(r"[A-Z0-9]{1,6}", str(cfg["digi_alias"])):
+        errs.append("digipeater alias must be empty or 1-6 characters A-Z / 0-9")
+    for key, label, lo, hi in (("digi_max_n", "digipeater WIDEn-N limit", 1, 7), ("digi_dedupe_s", "digipeater duplicate window s", 0, 600),
+                               ("digi_rate_per_min", "digipeater repeats per minute", 0, 60), ("digi_burst", "digipeater burst", 1, 8),
+                               ("digi_src_min_s", "digipeater per-station interval s", 0, 300)):
+        if not (isinstance(cfg[key], int) and lo <= cfg[key] <= hi):
+            errs.append("%s must be %d-%d" % (label, lo, hi))
+    for key, label, lo, hi in (("saf_max_fwd", "store-and-forward sends per message", 1, 8),
+                               ("saf_fwd_interval_s", "store-and-forward interval s", 10, 86400),
+                               ("saf_ttl_min", "store-and-forward lifetime min", 1, 1440)):
+        if not (isinstance(cfg[key], int) and lo <= cfg[key] <= hi):
+            errs.append("%s must be %d-%d" % (label, lo, hi))
     if cfg["frontend"] not in FRONTENDS:
         errs.append("front end must be one of %s" % ", ".join(FRONTENDS))
     return errs
@@ -180,9 +197,29 @@ def render_config_h(cfg):
 #define S2S2_CW_UNIT_MS          %(cw_unit_ms)dU         /* Morse dit length; the GS decoder uses the same value */
 #define S2S2_BEACON_PERIOD_MS    %(beacon_period_s)d000UL  /* CW beacon starts every this long */
 
+/* satellite digipeater (docs/DIGIPEATER.md) */
+#define S2S2_DIGI_ENABLE         %(digi_on)d
+#define S2S2_DIGI_ALIAS          %(digi_alias)s     /* generic alias answered besides our call sign, "" = none */
+#define S2S2_DIGI_WIDE           %(digi_wide_on)d         /* answer WIDEn-N paths of the tier 2 */
+#define S2S2_DIGI_MAX_N          %(digi_max_n)d         /* highest N accepted (flooding control) */
+#define S2S2_DIGI_TRACE          %(digi_trace_on)d         /* insert our call sign into WIDEn-N paths */
+#define S2S2_DIGI_DEDUPE_MS      %(digi_dedupe_s)d000UL  /* same source + destination + info is not repeated again inside this window */
+#define S2S2_DIGI_RATE_PER_MIN   %(digi_rate_per_min)d         /* sustained repeats per minute, 0 = unlimited */
+#define S2S2_DIGI_BURST          %(digi_burst)d         /* token bucket size */
+#define S2S2_DIGI_SRC_MIN_MS     %(digi_src_min_s)d000UL  /* minimum time between two repeats of the same station */
+
+/* store-and-forward (needs the digipeater): accepted frames are kept and sent again, journal in CPU1 flash */
+#define S2S2_SAF_ENABLE          %(saf_on)d
+#define S2S2_SAF_IMMEDIATE       %(saf_immediate_on)d         /* also repeat right away (0 = only send from the store) */
+#define S2S2_SAF_MAX_FORWARDS    %(saf_max_fwd)d         /* sends of one stored message */
+#define S2S2_SAF_INTERVAL_MS     %(saf_fwd_interval_s)d000UL  /* between two sends of the same message */
+#define S2S2_SAF_TTL_MS          (%(saf_ttl_min)d0000UL * 6UL)   /* lifetime: minutes * 60000 */
+
 #endif
 """ % dict(cfg, project=c_str(cfg["project"]), sat_call=c_str(cfg["sat_call"]), gs_call=c_str(cfg["gs_call"]),
-           cw_call=c_str("%s %s" % (cfg["project"], cfg["sat_call"])))
+           cw_call=c_str("%s %s" % (cfg["project"], cfg["sat_call"])),
+           digi_on=int(cfg["digi"]), digi_alias=c_str(cfg["digi_alias"]), digi_wide_on=int(cfg["digi_wide"]),
+           digi_trace_on=int(cfg["digi_trace"]), saf_on=int(cfg["saf"]), saf_immediate_on=int(cfg["saf_immediate"]))
 
 
 def render_mk(cfg):
@@ -192,8 +229,9 @@ DEBUG            ?= %s
 FRONTEND         ?= %s
 LOG              ?= %s
 TIMER_IF_USE_RTC ?= %s
+DIGI             ?= %s
 """ % ("TRUE" if cfg["auth"] else "FALSE", "T" if cfg["debug"] else "F", cfg["frontend"],
-       "1" if cfg["log"] else "0", "1" if cfg["timer_rtc"] else "0")
+       "1" if cfg["log"] else "0", "1" if cfg["timer_rtc"] else "0", "TRUE" if cfg["digi"] else "FALSE")
 
 
 def generate(cfg=None, new_key=False):

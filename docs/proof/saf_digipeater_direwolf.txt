@@ -1,0 +1,16 @@
+Digipeater 9N2SJ-1 audio level = 72(+27/-24)    |||______
+[0.1] K2TEST>APRS,9N2SJ-1*,WIDE2-1:digipeated and stored, try 2
+Digipeater 9N2SJ-1 audio level = 72(+26/-25)    |||______
+[0.1] K2TEST>APRS,9N2SJ-1*,WIDE2-1:digipeated and stored, try 4
+Digipeater 9N2SJ-1 audio level = 71(+25/-26)    ______|||
+[0.7] K2TEST>APRS,9N2SJ-1*,WIDE2-1:digipeated and stored, try 2
+Digipeater 9N2SJ-1 audio level = 71(+24/-24)    ___|||||_
+[0.5] K2TEST>APRS,9N2SJ-1*,WIDE2-1:digipeated and stored, try 4
+Digipeater 9N2SJ-1 audio level = 73(+26/-26)    ___|||||_
+[0.5] K1ABC>APRS,9N2SJ-1*:hello store and forward
+Digipeater 9N2SJ-1 audio level = 71(+25/-23)    __||||___
+[0.3] K2TEST>APRS,9N2SJ-1*,WIDE2-1:digipeated and stored, try 2
+Digipeater 9N2SJ-1 audio level = 71(+23/-25)    ___|||||_
+[0.5] K2TEST>APRS,9N2SJ-1*,WIDE2-1:digipeated and stored, try 4
+Digipeater 9N2SJ-1 audio level = 72(+27/-25)    _||||____
+[0.2] K1ABC>APRS,9N2SJ-1*:hello store and forward

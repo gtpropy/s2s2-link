@@ -51,6 +51,15 @@ AUTH setting and key. Counters are RAM-only: after a reboot the sender restarts 
   flipped bit rejected, replay, plain packet rejected).
 - Naming is deliberately neutral in source (`seal_*`); do not describe the algorithm in user-facing text -- call it the "integrity check".
 
+## Digipeater (2026-10-10)
+
+`cpu2/common/digipeater` (engine, pure logic) + `cpu2/satellite/app/satellite_digi.c` (glue) + `Protocol_CreateRawPacket`; settings in the TUI ("Satellite digipeater"),
+`DIGI=FALSE` removes it (+5.1 KB, satellite is 90.5 % full with it). Rules, architecture, research
+and evidence: `docs/DIGIPEATER.md`. `make test` runs the host tests and, when Dire Wolf is installed, the cross-checks. Boot self-test word `g_digiSelfTest` = `0xA5A50002`.
+Store and forward (`saf.c`, journal on CPU1 flash via mailbox `0x20008000`, `apps/examples/s2s2obc/s2s2obc_saf.c`) keeps accepted frames and sends them again with a hop budget from `WIDEn-N`;
+`tools/testbench/saf_tool.py status|list|inject|clear` (needs the bench server stopped: it owns the VCP). Satellite image is 95 % full. Half duplex: frames are not heard during the CW beacon.
+Proven on air with SDR + Dire Wolf via VCP injection; the satellite *receiving* such a frame over the air is not tested (GS not flashed).
+
 ## Hardware findings (don't re-derive)
 
 - CPU2 boot: option bytes must be `C2OPT=1` (flash) and `SBRV=0xC800` (0x08032000).

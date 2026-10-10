@@ -52,6 +52,7 @@ def build_app():
         .pair Input { width: 1fr; margin-right: 1; }
         Input { margin-bottom: 1; }
         #cfg_error { color: $error; }
+        #digi_help { color: $text-muted; }
         #key_status { margin: 1 0; color: $text-muted; }
         Select { width: 100%; margin-bottom: 1; }
         .mem { border: round $primary; padding: 0 1; margin-bottom: 1; height: auto; }
@@ -135,6 +136,38 @@ def build_app():
                                 yield Label("Ground station probe")
                                 yield Select([], prompt="none selected", id="gs_serial", allow_blank=True)
                                 yield Button("Rescan probes (p)", id="rescan")
+                        with Horizontal(id="cfg_row2"):
+                            with Vertical(classes="panel"):
+                                yield Label("Satellite digipeater", classes="title")
+                                yield Checkbox("DIGI    repeat other stations' AX.25 UI frames", id="cfg_digi")
+                                yield Checkbox("WIDE    answer WIDE2-N paths", id="cfg_digi_wide")
+                                yield Checkbox("TRACE   insert our call sign into WIDE2-N paths", id="cfg_digi_trace")
+                                yield Label("Alias besides our call sign (empty = none)")
+                                yield Input(id="cfg_digi_alias", max_length=6)
+                            with Vertical(classes="panel"):
+                                yield Label("Digipeater limits", classes="title")
+                                yield Label("Highest WIDE2-N accepted (1-7)")
+                                yield Input(id="cfg_digi_max_n", max_length=1)
+                                yield Label("Duplicate window s (0 = off)")
+                                yield Input(id="cfg_digi_dedupe_s", max_length=3)
+                                yield Label("Repeats per minute (0 = unlimited) / burst")
+                                with Horizontal(classes="pair"):
+                                    yield Input(id="cfg_digi_rate_per_min", max_length=2)
+                                    yield Input(id="cfg_digi_burst", max_length=1)
+                                yield Label("Minimum seconds between two repeats of one station")
+                                yield Input(id="cfg_digi_src_min_s", max_length=3)
+                            with Vertical(classes="panel"):
+                                yield Label("Store and forward", classes="title")
+                                yield Checkbox("SAF     keep repeated frames, send them again later", id="cfg_saf")
+                                yield Checkbox("NOW     also repeat right away", id="cfg_saf_immediate")
+                                yield Label("Sends per message (1-8) / lifetime min")
+                                with Horizontal(classes="pair"):
+                                    yield Input(id="cfg_saf_max_fwd", max_length=1)
+                                    yield Input(id="cfg_saf_ttl_min", max_length=4)
+                                yield Label("Seconds between two sends of one message")
+                                yield Input(id="cfg_saf_fwd_interval_s", max_length=5)
+                                yield Static("Rules, hopping, tests: docs/DIGIPEATER.md. The digipeater and the CW beacon "
+                                             "share one radio: other stations are heard only while no beacon is sent.", id="digi_help")
                         with Horizontal(id="actions"):
                             yield Button("Build (b)", id="act_build", variant="primary")
                             yield Button("Flash CPU2 (f)", id="act_flash", variant="success")
@@ -179,10 +212,12 @@ def build_app():
         def set_status(self, text):
             self.query_one("#status", Static).update(text)
 
-        CHECKS = ("build_sat", "build_gs", "auth", "debug", "log", "timer_rtc")
+        CHECKS = ("build_sat", "build_gs", "auth", "debug", "log", "timer_rtc", "digi", "digi_wide", "digi_trace", "saf", "saf_immediate")
         TEXTS = ("project", "sat_call", "sat_ssid", "gs_call", "gs_ssid", "downlink_hz", "uplink_hz",
-                 "cw_unit_ms", "beacon_period_s")
-        INTS = ("sat_ssid", "gs_ssid", "downlink_hz", "uplink_hz", "cw_unit_ms", "beacon_period_s")
+                 "cw_unit_ms", "beacon_period_s", "digi_alias", "digi_max_n", "digi_dedupe_s", "digi_rate_per_min",
+                 "digi_burst", "digi_src_min_s", "saf_max_fwd", "saf_fwd_interval_s", "saf_ttl_min")
+        INTS = ("sat_ssid", "gs_ssid", "downlink_hz", "uplink_hz", "cw_unit_ms", "beacon_period_s", "digi_max_n",
+                "digi_dedupe_s", "digi_rate_per_min", "digi_burst", "digi_src_min_s", "saf_max_fwd", "saf_fwd_interval_s", "saf_ttl_min")
         _newkey_armed = 0.0
 
         def load_widgets(self):

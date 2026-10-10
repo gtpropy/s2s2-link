@@ -8,9 +8,11 @@
 TARGET      = satellite
 TARGET_NAME = Satellite
 
+# recursive (=): DIGI_ON is only known after cpu2.mk has read the generated configuration
 TARGET_SRCS = app/satellite_main.c \
               app/satellite_app.c \
-              uart/obc_led.c
+              uart/obc_led.c \
+              $(if $(filter 1,$(DIGI_ON)),app/satellite_digi.c ../common/digipeater/digipeater.c ../common/digipeater/saf.c)
 TARGET_DEFINES =
 TARGET_OPTS    = sat-$(FRONTEND)-$(LOG)
 
