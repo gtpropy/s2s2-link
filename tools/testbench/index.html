@@ -146,10 +146,29 @@ th{color:var(--mute);font-weight:600;font-size:12px}
     <div class="row">
       <label style="margin:0">seconds</label><input id="cw-secs" type="number" value="3600" min="5" max="43200">
       <button data-run="cwtest">Send HELLO continuously</button>
+      <button data-run="cwtest" data-mode="carrier" title="a CW decoder such as CwGet reads the carrier as a dash and prints THELLO">HELLO with a 1 s carrier in front</button>
       <button data-run="cwtest" data-mode="gmsk">Send HELLO as GMSK packets</button>
     </div>
-    <p class="hint">The satellite keys <b>HELLO</b> in Morse on its downlink frequency, <b>435.000 MHz</b>, over and over: 1 s steady carrier, HELLO (80 ms dit, 240 ms dah), 1.5 s quiet, about 9 s per round. On a TinySA set centre 435 MHz with a narrow span (or zero span) to see the keying; the ground station also decodes it. Stop ends it early; it ends by itself after the time shown. A CW beacon that is already running finishes first (up to ~37 s).</p>
+    <p class="hint">The satellite keys <b>HELLO</b> in Morse on its downlink frequency, <b>435.000 MHz</b>, over and over: HELLO (80 ms dit, 240 ms dah), 1.5 s quiet, about 6 s per round, decoded as <b>HELLO</b> by CwGet. The second button puts a 1 s steady carrier in front (easier to find on a spectrum analyzer) which a CW decoder reads as a dash, so it prints <b>THELLO</b>. On a TinySA set centre 435 MHz with a narrow span (or zero span) to see the keying; the ground station also decodes it. Stop ends it early; it ends by itself after the time shown. A CW beacon that is already running finishes first (up to ~37 s).</p>
     <div id="cwtest-out"></div>
+  </section>
+
+  <section>
+    <h2>Digipeater + store and forward <span id="v-digi"></span></h2>
+    <div class="row">
+      <label style="margin:0;display:flex;gap:6px;align-items:center" title="an RTL-SDR + Direwolf also checks that the repeats are really on 435.000 MHz with the rewritten path"><input type="checkbox" id="digi-sdr"> also check over the air with the SDR + Direwolf</label>
+      <label style="margin:0">SDR MHz</label><input id="digi-freq" type="number" step="0.0001" value="434.9936" style="width:100px">
+      <label style="margin:0">gain</label><input id="digi-gain" type="number" value="40" style="width:60px">
+      <button data-run="digi">Run the digipeater test</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <input id="digi-text" type="text" value="K1ABC>APZS2S,ARISS:>hello store and forward" style="flex:1;min-width:320px" class="mono">
+      <button id="digi-inject">Inject this frame</button>
+      <button id="digi-store">Show the stored messages</button>
+      <button id="digi-clear" title="empties the journal in CPU1 flash; reset CPU2 afterwards so it forgets its RAM copy">Clear the journal</button>
+    </div>
+    <p class="hint">Needs only the Nucleo (VCP) &mdash; no ground station. Run it at most once a minute: the digipeater limits itself to 6 repeats per minute (burst 2), so a second run right after the first sees <span class="mono">rate</span> / <span class="mono">same station too soon</span> instead of a repeat. Frames are handed to the satellite's digipeater through CPU1 as if they had been heard on 437.375 MHz; the satellite answers between its beacons (up to ~50 s). The test checks the decision for each case (alias and <span class="mono">WIDE2-2</span> repeated with trace, duplicate, <span class="mono">WIDE1-1</span> fill-in, no path, own source, loop, hop limit) and then lists the messages CPU1 keeps in flash: hops left, times sent, time left, bytes. A repeat is sent on the downlink frequency, so with the SDR box ticked Direwolf must decode it. Direwolf may print APRS style warnings for free text; the test frames use a <span class="mono">&gt;</span> status text and the experimental destination <span class="mono">APZS2S</span> to avoid them.</p>
+    <div id="digi-out"></div>
   </section>
 
   <section>
@@ -290,7 +309,7 @@ async function refresh(fresh){
       $('#img-prog').textContent = `${s.progress.got.length} / ${s.progress.total}`;
       $('#img-bar').style.width = (100 * s.progress.got.length / s.progress.total) + '%';
     }
-    for (const k of ['link','image','sdr','rate','cwtest','sdrimage','imageloop']) if (s.results[k] && !(k === 'image' && s.running === 'image')) showResult(k, s.results[k]);
+    for (const k of ['link','image','sdr','rate','cwtest','sdrimage','imageloop','digi']) if (s.results[k] && !(k === 'image' && s.running === 'image')) showResult(k, s.results[k]);
     setRunning(s.running);
     // one-click setup: connect whatever is plugged in, once
     if (!autoDone){ autoDone = true;
@@ -342,6 +361,13 @@ function showResult(k, r){
     o.innerHTML = r.rows ? `<table><tr><th>gap</th><th>ms / packet</th><th>air rate</th><th>payload rate</th><th>sat sent</th><th>GS got</th><th>lost</th><th>bad</th><th>RSSI</th></tr>` +
       r.rows.map(x => `<tr><td>${x.gap_ms} ms</td><td>${x.ms_per_packet??''}</td><td><b>${x.air_bps??''}</b> bit/s</td><td>${x.payload_bps??''} bit/s</td><td>${x.sat_sent}/${x.n}</td><td>${x.gs_got}/${x.n}</td><td>${x.loss_pct}%</td><td>${x.gs_bad}</td><td>${x.rssi??''} dBm</td></tr>`).join('') +
       `</table>` : esc(r.why||'');
+  } else if (k === 'digi'){
+    o.innerHTML = r.rows ? `<table><tr><th>#</th><th>case</th><th>frame injected</th><th>expected</th><th>satellite said</th><th>on air</th></tr>` +
+      r.rows.map(x => `<tr><td>${x.n}</td><td>${esc(x.name)}</td><td class="mono">${esc(x.frame)}</td><td>${esc(x.expected)}</td><td><span class="verdict ${x.ok?'PASS':'FAIL'}">${x.ok?'PASS':'FAIL'}</span> ${esc(x.got)}</td><td class="mono">${x.air ? (x.seen === null ? '-' : (x.seen ? 'decoded' : 'NOT heard')) : ''}</td></tr>`).join('') +
+      `</table><p class="hint">${esc(r.journal||'no journal answer')} &middot; <b>STORED ${r.stored} msg, ${r.stored_bytes} B</b></p>` +
+      (r.objects && r.objects.length ? `<table><tr><th>MEMORY OBJECT</th><th>id</th><th>len</th><th>hops left</th><th>sent</th><th>time left</th><th>frame</th></tr>` +
+        r.objects.map(x => `<tr><td>#${x.n}</td><td>${x.id}</td><td>${x.len} B</td><td>${x.hops_left}</td><td>${x.fwd_count}</td><td>${x.ttl_s} s</td><td class="mono">${esc(x.text)}</td></tr>`).join('') + `</table>` : '')
+      : esc(r.why||'');
   } else if (k === 'link'){
     o.innerHTML = r.rows ? `<table><tr><th>#</th><th>result</th><th>tries</th><th>latency</th><th>RSSI</th><th>frames</th></tr>` +
       r.rows.map(x => `<tr><td>${x.n}</td><td><span class="verdict ${x.ok?'PASS':'FAIL'}">${x.ok?'PASS':'FAIL'}</span>${x.why?' '+esc(x.why):''}</td><td>${x.tries??''}</td><td>${x.latency_ms??''} ms</td><td>${x.rssi_avg??''} dBm</td><td>${x.frames??''}</td></tr>`).join('') +
@@ -407,12 +433,20 @@ $$('[data-run]').forEach(b => b.onclick = () => {
   if (n === 'imageloop'){ cfg.fragments = +$('#loop-n').value; cfg.seconds = +$('#loop-secs').value; cfg.fresh = false; }
   if (n === 'sdrimage'){ cfg.freq_mhz = +$('#sdrimg-freq').value; cfg.gain = +$('#sdrimg-gain').value; cfg.fresh = false; }
   if (n === 'cwtest'){ cfg.seconds = +$('#cw-secs').value; cfg.fresh = false; cfg.mode = b.dataset.mode || 'cw'; }
+  if (n === 'digi'){ cfg.sdr = $('#digi-sdr').checked; cfg.freq_mhz = +$('#digi-freq').value; cfg.gain = +$('#digi-gain').value; cfg.fresh = false; }
   if (n === 'rate'){ cfg.count = +$('#rate-n').value; cfg.gaps = $('#rate-gaps').value; }
   if (n === 'sdr'){ cfg.count = +$('#sdr-n').value; cfg.freq_mhz = +$('#freq').value; cfg.gain = +$('#gain').value; }
   if (n === 'image'){ cfg.mode = seg('#modeseg'); cfg.ledtrace = $('#ledtrace').checked; $('#img-rx').removeAttribute('src'); $('#sha-rx').textContent = ''; $('#image-out').innerHTML = ''; }
   api('/api/test/start', cfg).catch(e => addLog('ev', e.message, 'err'));
 });
 $('#stop').onclick = () => api('/api/test/stop', {});
+const digiShow = j => { $('#digi-out').innerHTML = `<p class="hint">${esc(j.journal||'')} &middot; <b>STORED ${j.stored} msg, ${j.bytes} B</b></p>` + (j.objects && j.objects.length ?
+  `<table><tr><th>MEMORY OBJECT</th><th>id</th><th>len</th><th>hops left</th><th>sent</th><th>time left</th><th>frame</th></tr>` +
+  j.objects.map(x => `<tr><td>#${x.n}</td><td>${x.id}</td><td>${x.len} B</td><td>${x.hops_left}</td><td>${x.fwd_count}</td><td>${x.ttl_s} s</td><td class="mono">${esc(x.text)}</td></tr>`).join('') + `</table>` : ''); };
+$('#digi-inject').onclick = () => { $('#digi-out').innerHTML = '<p class="hint">injecting ... (the satellite answers between its beacons, up to ~50 s)</p>';
+  api('/api/digi/inject', {text: $('#digi-text').value}).then(j => api('/api/digi/store', {}).then(s => { digiShow(s); $('#digi-out').insertAdjacentHTML('afterbegin', `<p><b>${esc(j.result)}</b></p>`); })).catch(e => addLog('ev', e.message, 'err')); };
+$('#digi-store').onclick = () => api('/api/digi/store', {}).then(digiShow).catch(e => addLog('ev', e.message, 'err'));
+$('#digi-clear').onclick = () => api('/api/digi/clear', {}).then(j => $('#digi-out').innerHTML = `<p class="hint">${esc(j.note)}</p>`).catch(e => addLog('ev', e.message, 'err'));
 $('#sample').onchange = () => $('#pick').click();
 function seg(id){ const b = document.querySelector(id + ' button.on'); return b ? b.dataset.v : ''; }
 $$('.seg button').forEach(b => b.onclick = () => { b.parentElement.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));

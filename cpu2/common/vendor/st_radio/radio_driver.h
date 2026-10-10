@@ -52,7 +52,10 @@ extern "C" {
 #define SX_FREQ_TO_CHANNEL( channel, freq )                                  \
 do                                                                           \
 {                                                                            \
-  channel = (uint32_t) ((((uint64_t) freq)<<25)/(XTAL_FREQ) );               \
+  /* floor(freq * 2^25 / 32 MHz) in 32-bit math (= freq * 2^14 / 15625); the 64-bit division cost 1.4 KB of libgcc */ \
+  _Static_assert(XTAL_FREQ == 32000000UL, "SX_FREQ_TO_CHANNEL assumes a 32 MHz crystal");                  \
+  uint32_t f_ = (uint32_t)(freq);                                            \
+  channel = (f_ / 15625UL) * 16384UL + ((f_ % 15625UL) * 16384UL) / 15625UL; \
 }while( 0 )
 
 

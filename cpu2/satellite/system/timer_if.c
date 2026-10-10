@@ -621,12 +621,13 @@ uint32_t TIMER_IF_GetMinimumTimeout(void)                  { return 3; }
 
 uint32_t TIMER_IF_Convert_ms2Tick(uint32_t timeMilliSec)
 {
-  return (uint32_t)((((uint64_t) timeMilliSec) << RTC_N_PREDIV_S) / 1000);
+  /* 32-bit math, same result as ((uint64_t)ms << N) / 1000 (the 64-bit division pulled about 1.4 KB of libgcc in) */
+  return ((timeMilliSec / 1000U) << RTC_N_PREDIV_S) + (((timeMilliSec % 1000U) << RTC_N_PREDIV_S) / 1000U);
 }
 
 uint32_t TIMER_IF_Convert_Tick2ms(uint32_t tick)
 {
-  return (uint32_t)((((uint64_t)(tick)) * 1000) >> RTC_N_PREDIV_S);
+  return ((tick >> RTC_N_PREDIV_S) * 1000U) + (((tick & ((1U << RTC_N_PREDIV_S) - 1U)) * 1000U) >> RTC_N_PREDIV_S);   /* = (uint64_t)tick * 1000 >> N */
 }
 
 void TIMER_IF_DelayMs(uint32_t delay)                      { HAL_Delay(delay); }

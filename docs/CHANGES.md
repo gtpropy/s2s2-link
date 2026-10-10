@@ -331,3 +331,35 @@ GS 49,248 B, nuttx.bin 141,852 B. A rate test blocks the CPU2 loop (and so the 9
 
 `cpu2/common/modem` (AFSK1200 software modem after the "AFSK APRS Digipeater" paper), `test_afsk`, `afsk_tool` and `afsk_direwolf.sh` are gone (archive `../s2s2-link_removed_afsk_2026-10-10.tar.gz`).
 The digipeater runs on the satellite's GMSK 4800 bit/s G3RUH path only; `docs/DIGIPEATER.md` section 3 now describes that. The chain test (`digi_chain.sh`) still decodes the repeats with Dire Wolf at 4800 bit/s G3RUH.
+
+## 20. Store statistics appended to digipeated messages (test option, 2026-10-10)
+
+`S2S2_SAF_APPEND_STATS` (TUI "STATS", default off): the satellite appends ` | MEMORY OBJECTS: #n id len hops_left forwarded ttl_left | STORED n msg, N B` to the text of the frame it repeats
+right away (`append_stats()` in `satellite_digi.c`; the stored copy is unchanged). `saf_tool.py inject` prints the stored objects after a repeat. Checked by reading the transmit buffer over SWD; not
+decoded over the air this time (the RTL-SDR was not enumerated).
+
+## 21. Digipeater test in the test bench (2026-10-10)
+
+`tools/testbench/server.py`: test `digi` (8 injected frames with expected decisions, journal listing, optional RTL-SDR + Direwolf over-the-air check), `/api/digi/inject|store|clear`;
+`index.html`: section "Digipeater + store and forward" with Run / Inject / Show stored / Clear. Needs only the Nucleo VCP. Run on the hardware: 8/8 as expected, 3 messages / 153 B stored.
+Test frames use `>` status text and destination `APZS2S` (no Dire Wolf APRS warnings).
+
+## 22. NuttX-style menuconfig, smaller images (2026-10-10)
+
+- **menuconfig** (`tools/config/s2s2_tui.py`, menu tree in `s2s2_core.MENUS`): a real menu like NuttX's (`--->` submenus, `[*]` / `(value)` items, help line, `?` full help, Space / y / n,
+  value dialog with validation, choice lists, options hidden when their parent is off, probe picker, build / flash / clean / memory as menu actions). Every change is saved to `.s2s2.config` and
+  `generated/` is rewritten at once. The earlier version was a cramped form of widgets; it also overrode Textual's own `App.run_action`, which crashes on key bindings with
+  `run_action() takes 2 positional arguments but 3 were given` (the "make tui errors" report): renamed. `make` now also checks the terminal size and the Textual import, and writes
+  any other failure to `.s2s2_tui_error.log` with a one-line reason instead of a raw traceback.
+- **Smaller images** (same behaviour): satellite 53,676 -> 50,876 B (88.7 % of 56 KB), ground station 45,628 -> 42,176 B.
+  - ST's advanced-trace layer formatted every middleware log line and handed it to a driver that discards it: replaced by a stub (`common/system/trace_stub.c`), -2.1 KB;
+  - CRC-16 table 256 -> 16 entries (nibble-wise, same result, checked on 20,000 random buffers): -480 B;
+  - the SX126x channel conversion `freq * 2^25 / 32 MHz` and the timer stubs in 32-bit math (same result, checked on 200,000 frequencies): removes the 64-bit division from libgcc.
+  - Tried and rejected: `-flto` (the startup code needs `HardFault_Handler_C` kept), `-fno-jump-tables` and `-fmerge-all-constants` (bigger).
+- Checked: `make test` (framing, CRC, digipeater, store and forward, Dire Wolf chain), on-chip rule self-test `0xA5A50002`, bench digipeater test 8/8 on the flashed image.
+
+## 23. CW HELLO test without the leading carrier (2026-10-10)
+
+The CW HELLO test (bench "Send HELLO continuously") used to key a 1 s steady carrier in front of every HELLO. A CW decoder (CwGet) reads a long key-down as a dash, the letter T, so it printed
+`THELLO`. Default now: HELLO only (`cw_test_mode` 0), about 6 s per round. The carrier is still available as a separate bench button / `cw_test_mode` 2 for a spectrum analyzer. The beacon's own 500 ms tuning
+carrier before `S2S2 9N2SJ ...` is unchanged (our ground station skips it; third-party decoders may show a leading T or E). Satellite and CPU1 reflashed; the bench server has to be restarted to get the new button.

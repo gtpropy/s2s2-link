@@ -1,30 +1,40 @@
 #!/usr/bin/env python3
 """
-s2s2_tui.py -- the configuration, build and flash TUI of the S2S2 CPU2 firmware (satellite + ground station).
-Like NuttX's menuconfig it is THE place where everything is configured: targets, AUTH, build options, identity
-(call signs, SSIDs), radio frequencies, CW / beacon timing, the shared AUTH key and the ST-Link probes. Every change is
-saved to <repo>/.s2s2.config and regenerates <repo>/generated/{s2s2_config.h, s2s2.mk, secrets.h}, which both firmware
-Makefiles use; secrets.h (random AUTH key) is created automatically the first time.
+s2s2_tui.py -- menuconfig for the S2S2 CPU2 firmware (satellite + ground station), in the style of NuttX's menuconfig.
 
-  python3 tools/config/s2s2_tui.py                    interactive TUI             (make / make menuconfig)
-  python3 tools/config/s2s2_tui.py --configure        generate the files, no UI   (make configure)
+The menu tree is the single place where everything is configured: targets, AUTH and its key, build options, identity (call
+signs), radio frequencies and timing, the digipeater and store and forward, the ST-Link probes. Every change is saved to
+<repo>/.s2s2.config and regenerates <repo>/generated/{s2s2_config.h, s2s2.mk, secrets.h}, which both firmware Makefiles use;
+secrets.h (random AUTH key) is created automatically the first time. The menu itself is described in s2s2_core.MENUS.
+
+Keys (shown at the bottom):
+  Up / Down   move          Enter  open a submenu / change the value      Esc or Left  one menu back
+  Space  toggle [*] / [ ]    y / n  set a bool                            ?  help of the item      s  save + generate
+  b build  f flash  a flash all  p rescan probes  m memory  o output  c menu  q quit
+
+  python3 tools/config/s2s2_tui.py                    interactive menuconfig       (make / make menuconfig)
+  python3 tools/config/s2s2_tui.py --configure        generate the files, no UI    (make configure)
   python3 tools/config/s2s2_tui.py --defconfig        reset the options to the defaults (make defconfig)
-  python3 tools/config/s2s2_tui.py --newkey           new random AUTH key         (make newkey)
-  python3 tools/config/s2s2_tui.py --memstat          print memory statistics     (make memstat)
-  python3 tools/config/s2s2_tui.py --probes           list ST-Link probes         (make probes)
-  python3 tools/config/s2s2_tui.py --batch build|flash|flash-all|clean            (make build ...)
+  python3 tools/config/s2s2_tui.py --newkey           new random AUTH key          (make newkey)
+  python3 tools/config/s2s2_tui.py --memstat          print memory statistics      (make memstat)
+  python3 tools/config/s2s2_tui.py --probes           list ST-Link probes          (make probes)
+  python3 tools/config/s2s2_tui.py --batch build|flash|flash-all|clean             (make build ...)
   python3 tools/config/s2s2_tui.py --dump             print config + stats as text
 
-Tabs: Configure / Memory (flash and RAM bars, .bin sizes, largest symbols) / Output (live build and flash log).
-Build/flash/generation logic lives in s2s2_core.py.
+If the interactive mode cannot start (no Textual, terminal too small, an error) the reason is printed and written to
+<repo>/.s2s2_tui_error.log, and the batch modes above keep working.
 """
 import asyncio
 import os
 import re
+import shutil
 import sys
+import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import s2s2_core as C  # noqa: E402
+
+MIN_COLS, MIN_ROWS = 60, 18
 
 
 def build_app():
@@ -32,29 +42,134 @@ def build_app():
     from textual.app import App, ComposeResult
     from textual.binding import Binding
     from textual.containers import Horizontal, Vertical, VerticalScroll
-    from textual.widgets import (Button, Checkbox, Footer, Header, Input, Label, ProgressBar,
-                                 RichLog, Select, Static, TabbedContent, TabPane)
+    from textual.screen import ModalScreen
+    from textual.widgets import (Button, Footer, Header, Input, Label, OptionList, ProgressBar, RichLog, Static,
+                                 TabbedContent, TabPane)
+    from textual.widgets.option_list import Option
 
-    BLANK = getattr(Select, "BLANK", getattr(Select, "NULL", None))
+    # ------------------------------------------------------------------ modal dialogs
+    class ValueScreen(ModalScreen):
+        """Edit one number or text."""
+        BINDINGS = [Binding("escape", "cancel", "Cancel")]
+        CSS = """
+        ValueScreen { align: center middle; }
+        #box { width: 70; height: auto; border: round $primary; padding: 1 2; background: $surface; }
+        #err { color: $error; height: 1; }
+        #hint { color: $text-muted; }
+        """
 
+        def __init__(self, title, value, hint, check):
+            super().__init__()
+            self._title, self._value, self._hint, self._check = title, value, hint, check
+
+        def compose(self):
+            with Vertical(id="box"):
+                yield Label(self._title)
+                yield Input(value=self._value, id="v")
+                yield Static("", id="err")
+                yield Static(self._hint, id="hint")
+                yield Static("Enter = ok   Esc = cancel", id="keys")
+
+        def on_mount(self):
+            inp = self.query_one("#v", Input)
+            inp.focus()
+            inp.select_all()                     # typing replaces the old value
+
+        def on_input_changed(self, ev):
+            self.query_one("#err", Static).update(self._check(ev.value) or "")
+
+        def on_input_submitted(self, ev):
+            err = self._check(ev.value)
+            if err:
+                self.query_one("#err", Static).update(err)
+            else:
+                self.dismiss(ev.value)
+
+        def action_cancel(self):
+            self.dismiss(None)
+
+    class ChoiceScreen(ModalScreen):
+        """Pick one of a list."""
+        BINDINGS = [Binding("escape", "cancel", "Cancel")]
+        CSS = """
+        ChoiceScreen { align: center middle; }
+        #box { width: 70; height: auto; max-height: 20; border: round $primary; padding: 1 2; background: $surface; }
+        """
+
+        def __init__(self, title, options, current):
+            super().__init__()
+            self._title, self._options, self._current = title, options, current
+
+        def compose(self):
+            with Vertical(id="box"):
+                yield Label(self._title)
+                yield OptionList(*[Option(("(*) " if v == self._current else "( ) ") + lab, id=str(i))
+                                   for i, (lab, v) in enumerate(self._options)], id="ol")
+                yield Static("Enter = select   Esc = cancel")
+
+        def on_mount(self):
+            ol = self.query_one("#ol", OptionList)
+            ol.focus()
+            for i, (_, v) in enumerate(self._options):
+                if v == self._current:
+                    ol.highlighted = i
+
+        def on_option_list_option_selected(self, ev):
+            self.dismiss(self._options[int(ev.option.id)][1])
+
+        def action_cancel(self):
+            self.dismiss(None)
+
+    class ConfirmScreen(ModalScreen):
+        BINDINGS = [Binding("escape", "no", "No"), Binding("n", "no", "No"), Binding("y", "yes", "Yes")]
+        CSS = """
+        ConfirmScreen { align: center middle; }
+        #box { width: 70; height: auto; border: round $warning; padding: 1 2; background: $surface; }
+        """
+
+        def __init__(self, text):
+            super().__init__()
+            self._text = text
+
+        def compose(self):
+            with Vertical(id="box"):
+                yield Static(self._text)
+                yield Static("\ny = yes    n / Esc = no")
+
+        def action_yes(self):
+            self.dismiss(True)
+
+        def action_no(self):
+            self.dismiss(False)
+
+    class HelpScreen(ModalScreen):
+        BINDINGS = [Binding("escape", "close", "Close"), Binding("enter", "close", "Close"), Binding("question_mark", "close", "Close")]
+        CSS = """
+        HelpScreen { align: center middle; }
+        #box { width: 78; height: auto; max-height: 24; border: round $primary; padding: 1 2; background: $surface; }
+        """
+
+        def __init__(self, title, text):
+            super().__init__()
+            self._title, self._text = title, text
+
+        def compose(self):
+            with Vertical(id="box"):
+                yield Label(self._title)
+                yield Static("\n" + self._text + "\n\nEsc / Enter = close")
+
+        def action_close(self):
+            self.dismiss(None)
+
+    # ------------------------------------------------------------------ the app
     class S2S2App(App):
-        TITLE = "S2S2 CPU2 firmware"
+        TITLE = "S2S2 configuration"
         SUB_TITLE = "satellite + ground station"
         CSS = """
-        #cfg_row { height: auto; }
-        .panel { border: round $primary; padding: 0 1; margin: 0 1 1 0; height: auto; width: 1fr; }
-        .panel > Label.title { text-style: bold; color: $accent; margin-bottom: 1; }
-        #actions { height: auto; margin-top: 1; }
-        #actions Button { margin-right: 1; }
-        .btnrow { height: auto; }
-        .btnrow Button { margin-right: 1; }
-        .pair { height: auto; }
-        .pair Input { width: 1fr; margin-right: 1; }
-        Input { margin-bottom: 1; }
-        #cfg_error { color: $error; }
-        #digi_help { color: $text-muted; }
-        #key_status { margin: 1 0; color: $text-muted; }
-        Select { width: 100%; margin-bottom: 1; }
+        #crumb { height: 1; padding: 0 1; text-style: bold; color: $accent; }
+        #menu { height: 1fr; border: round $primary; }
+        #help { height: 5; border: round $primary; padding: 0 1; color: $text-muted; }
+        #cfgstatus { height: 1; padding: 0 1; color: $text-muted; }
         .mem { border: round $primary; padding: 0 1; margin-bottom: 1; height: auto; }
         .mem .title { text-style: bold; color: $accent; }
         .memline { margin-top: 1; }
@@ -64,15 +179,20 @@ def build_app():
         #status { height: 1; color: $text-muted; }
         """
         BINDINGS = [
+            Binding("escape,left,backspace", "back", "Back", show=False),
+            Binding("space", "toggle", "Toggle", show=False),
+            Binding("y", "set_bool(True)", "Yes", show=False),
+            Binding("n", "set_bool(False)", "No", show=False),
+            Binding("question_mark", "item_help", "Help"),
+            Binding("s", "save", "Save"),
             Binding("b", "build", "Build"),
-            Binding("f", "flash", "Flash CPU2"),
+            Binding("f", "flash", "Flash"),
             Binding("a", "flash_all", "Flash all"),
-            Binding("p", "rescan", "Rescan probes"),
-            Binding("s", "save", "Save + generate"),
-            Binding("c", "tab('tab_cfg')", "Configure"),
+            Binding("p", "rescan", "Probes"),
+            Binding("c", "tab('tab_cfg')", "Menu"),
             Binding("m", "tab('tab_mem')", "Memory"),
             Binding("o", "tab('tab_out')", "Output"),
-            Binding("r", "refresh_stats", "Refresh stats"),
+            Binding("r", "refresh_stats", "Refresh", show=False),
             Binding("q", "quit_app", "Quit"),
         ]
 
@@ -81,100 +201,20 @@ def build_app():
             self.cfg = C.load_config()
             self.probes = []
             self.busy = False
-            self._loading = False
+            self.stack = ["main"]
+            self.sel = {}                      # menu id -> highlighted index
+            self.items = []                    # the visible items of the current menu
+            self.status_text = ""
 
-        # ---------------------------------------------------------------- layout
+        # ------------------------------------------------------------ layout
         def compose(self) -> ComposeResult:
             yield Header()
             with TabbedContent(initial="tab_cfg", id="tabs"):
-                with TabPane("Configure", id="tab_cfg"):
-                    with VerticalScroll():
-                        with Horizontal(id="cfg_row"):
-                            with Vertical(classes="panel"):
-                                yield Label("Targets", classes="title")
-                                yield Checkbox("Satellite       (cpu2/satellite)", id="cfg_build_sat")
-                                yield Checkbox("Ground station  (cpu2/ground_station)", id="cfg_build_gs")
-                                yield Label("Build", classes="title")
-                                yield Checkbox("DEBUG   -Og -g3 (satellite will not fit 56 KB)", id="cfg_debug")
-                                yield Checkbox("LOG     satellite console log (off = broken, open bug)", id="cfg_log")
-                                yield Checkbox("RTC     RTC-backed UTIL_TIMER (dormant)", id="cfg_timer_rtc")
-                                yield Label("Satellite RF front end")
-                                yield Select([(f, f) for f in C.FRONTENDS], allow_blank=False, id="cfg_frontend")
-                                yield Label("Security", classes="title")
-                                yield Checkbox("AUTH    integrity tag + replay counter", id="cfg_auth")
-                                yield Static("", id="key_status")
-                                with Horizontal(classes="btnrow"):
-                                    yield Button("New AUTH key", id="act_newkey", variant="warning")
-                                    yield Button("Generate files", id="act_gen")
-                            with Vertical(classes="panel"):
-                                yield Label("Identity", classes="title")
-                                yield Label("Project name (CW prefix)")
-                                yield Input(id="cfg_project", max_length=6)
-                                yield Label("Satellite call sign / SSID")
-                                with Horizontal(classes="pair"):
-                                    yield Input(id="cfg_sat_call", max_length=6)
-                                    yield Input(id="cfg_sat_ssid", max_length=2)
-                                yield Label("Ground station call sign / SSID")
-                                with Horizontal(classes="pair"):
-                                    yield Input(id="cfg_gs_call", max_length=6)
-                                    yield Input(id="cfg_gs_ssid", max_length=2)
-                                yield Label("Radio and timing", classes="title")
-                                yield Label("Downlink Hz (satellite -> ground)")
-                                yield Input(id="cfg_downlink_hz", max_length=9)
-                                yield Label("Uplink Hz (ground -> satellite)")
-                                yield Input(id="cfg_uplink_hz", max_length=9)
-                                yield Label("CW dit length ms (20-200)")
-                                yield Input(id="cfg_cw_unit_ms", max_length=3)
-                                yield Label("Beacon period s (30-600)")
-                                yield Input(id="cfg_beacon_period_s", max_length=3)
-                                yield Static("", id="cfg_error")
-                            with Vertical(classes="panel"):
-                                yield Label("ST-Link probes", classes="title")
-                                yield Static("", id="probe_count")
-                                yield Label("Satellite probe")
-                                yield Select([], prompt="none selected", id="sat_serial", allow_blank=True)
-                                yield Label("Ground station probe")
-                                yield Select([], prompt="none selected", id="gs_serial", allow_blank=True)
-                                yield Button("Rescan probes (p)", id="rescan")
-                        with Horizontal(id="cfg_row2"):
-                            with Vertical(classes="panel"):
-                                yield Label("Satellite digipeater", classes="title")
-                                yield Checkbox("DIGI    repeat other stations' AX.25 UI frames", id="cfg_digi")
-                                yield Checkbox("WIDE    answer WIDE2-N paths", id="cfg_digi_wide")
-                                yield Checkbox("TRACE   insert our call sign into WIDE2-N paths", id="cfg_digi_trace")
-                                yield Label("Alias besides our call sign (empty = none)")
-                                yield Input(id="cfg_digi_alias", max_length=6)
-                            with Vertical(classes="panel"):
-                                yield Label("Digipeater limits", classes="title")
-                                yield Label("Highest WIDE2-N accepted (1-7)")
-                                yield Input(id="cfg_digi_max_n", max_length=1)
-                                yield Label("Duplicate window s (0 = off)")
-                                yield Input(id="cfg_digi_dedupe_s", max_length=3)
-                                yield Label("Repeats per minute (0 = unlimited) / burst")
-                                with Horizontal(classes="pair"):
-                                    yield Input(id="cfg_digi_rate_per_min", max_length=2)
-                                    yield Input(id="cfg_digi_burst", max_length=1)
-                                yield Label("Minimum seconds between two repeats of one station")
-                                yield Input(id="cfg_digi_src_min_s", max_length=3)
-                            with Vertical(classes="panel"):
-                                yield Label("Store and forward", classes="title")
-                                yield Checkbox("SAF     keep repeated frames, send them again later", id="cfg_saf")
-                                yield Checkbox("NOW     also repeat right away", id="cfg_saf_immediate")
-                                yield Label("Sends per message (1-8) / lifetime min")
-                                with Horizontal(classes="pair"):
-                                    yield Input(id="cfg_saf_max_fwd", max_length=1)
-                                    yield Input(id="cfg_saf_ttl_min", max_length=4)
-                                yield Label("Seconds between two sends of one message")
-                                yield Input(id="cfg_saf_fwd_interval_s", max_length=5)
-                                yield Static("Rules, hopping, tests: docs/DIGIPEATER.md. The digipeater and the CW beacon "
-                                             "share one radio: other stations are heard only while no beacon is sent.", id="digi_help")
-                        with Horizontal(id="actions"):
-                            yield Button("Build (b)", id="act_build", variant="primary")
-                            yield Button("Flash CPU2 (f)", id="act_flash", variant="success")
-                            yield Button("Flash CPU1 + boot option + CPU2 (a)", id="act_flash_all", variant="warning")
-                            yield Button("Clean", id="act_clean")
-                            yield Button("Defaults", id="act_defaults")
-                            yield Button("Save (s)", id="act_save")
+                with TabPane("Menu", id="tab_cfg"):
+                    yield Static("", id="crumb")
+                    yield OptionList(id="menu")
+                    yield Static("", id="help")
+                    yield Static("", id="cfgstatus")
                 with TabPane("Memory", id="tab_mem"):
                     with VerticalScroll():
                         for k in ("sat", "gs"):
@@ -195,14 +235,14 @@ def build_app():
             yield Footer()
 
         async def on_mount(self):
-            self._loading = True
-            self.load_widgets()
-            self._loading = False
             self.regenerate()                      # creates generated/secrets.h the first time
+            self.render_menu()
+            self.query_one("#menu", OptionList).focus()
             await self.rescan_probes()
+            self.render_menu()
             await self.refresh_memory()
 
-        # --------------------------------------------------------------- helpers
+        # ------------------------------------------------------------ helpers
         def tabs(self) -> TabbedContent:
             return self.query_one("#tabs", TabbedContent)
 
@@ -212,64 +252,220 @@ def build_app():
         def set_status(self, text):
             self.query_one("#status", Static).update(text)
 
-        CHECKS = ("build_sat", "build_gs", "auth", "debug", "log", "timer_rtc", "digi", "digi_wide", "digi_trace", "saf", "saf_immediate")
-        TEXTS = ("project", "sat_call", "sat_ssid", "gs_call", "gs_ssid", "downlink_hz", "uplink_hz",
-                 "cw_unit_ms", "beacon_period_s", "digi_alias", "digi_max_n", "digi_dedupe_s", "digi_rate_per_min",
-                 "digi_burst", "digi_src_min_s", "saf_max_fwd", "saf_fwd_interval_s", "saf_ttl_min")
-        INTS = ("sat_ssid", "gs_ssid", "downlink_hz", "uplink_hz", "cw_unit_ms", "beacon_period_s", "digi_max_n",
-                "digi_dedupe_s", "digi_rate_per_min", "digi_burst", "digi_src_min_s", "saf_max_fwd", "saf_fwd_interval_s", "saf_ttl_min")
-        _newkey_armed = 0.0
-
-        def load_widgets(self):
-            for key in self.CHECKS:
-                self.query_one("#cfg_" + key, Checkbox).value = bool(self.cfg[key])
-            for key in self.TEXTS:
-                self.query_one("#cfg_" + key, Input).value = str(self.cfg[key])
-            self.query_one("#cfg_frontend", Select).value = self.cfg["frontend"]
+        def say(self, text):
+            self.status_text = text
+            self.query_one("#cfgstatus", Static).update(text)
 
         def persist(self):
             C.save_config(self.cfg)
-            self.regenerate()
+            changed = self.regenerate()
+            self.say("saved .s2s2.config" + ("; generated " + ", ".join(os.path.basename(x) for x in changed) if changed else ""))
 
         def regenerate(self, new_key=False):
-            """Write generated/{secrets.h, s2s2_config.h, s2s2.mk}; show the key fingerprint and any problem."""
-            err = self.query_one("#cfg_error", Static)
+            """Write generated/{secrets.h, s2s2_config.h, s2s2.mk}; returns the files that changed ([] on a problem)."""
             try:
-                changed = C.generate(self.cfg, new_key=new_key)
+                return C.generate(self.cfg, new_key=new_key)
             except ValueError as e:
-                err.update("not generated: " + str(e))
+                self.say("NOT generated: " + str(e))
                 return []
-            err.update("")
-            key = C.read_key()
-            self.query_one("#key_status", Static).update(
-                "key %s   generated/secrets.h (git-ignored)\nboth boards must be built with the same key" %
-                (C.key_fingerprint(key) if key else "?"))
-            return changed
 
-        def _probe_options(self, current):
-            opts = [("%s   %s   %s" % (p["serial"], p["version"], p["chip"]), p["serial"]) for p in self.probes]
-            if current and all(s != current for _, s in opts):
-                opts.append(("%s   (not connected)" % current, current))
-            return opts
+        def key_text(self):
+            k = C.read_key()
+            return "key %s (generated/secrets.h, not in git; both boards need the same one)" % (C.key_fingerprint(k) if k else "?")
 
+        # ------------------------------------------------------------ the menu
+        def current(self):
+            return self.stack[-1]
+
+        def render_menu(self):
+            title, items = C.MENUS[self.current()]
+            self.items = [it for it in items if C.item_visible(it, self.cfg)]
+            ol = self.query_one("#menu", OptionList)
+            ol.clear_options()
+            opts = []
+            for i, it in enumerate(self.items):
+                opts.append(Option(self.line(it), id=str(i)))
+            ol.add_options(opts)
+            idx = min(self.sel.get(self.current(), 0), max(0, len(self.items) - 1))
+            if self.items:
+                ol.highlighted = idx
+            crumb = " > ".join(C.MENUS[m][0] for m in self.stack)
+            self.query_one("#crumb", Static).update(crumb)
+            self.update_help()
+
+        def line(self, it):
+            k, key, lab = it["kind"], it["key"], it["label"]
+            v = self.cfg.get(key)
+            if k == "menu":
+                return Text("    %s  --->" % lab)
+            if k == "bool":
+                return Text("[%s] %s" % ("*" if v else " ", lab))
+            if k in ("int", "str", "choice"):
+                return Text("(%s) %s" % (v if v != "" else "-", lab) + ("  --->" if k == "choice" else ""))
+            if k == "probe":
+                return Text("(%s) %s  --->" % (v or "none", lab))
+            if k == "info":
+                return Text("    " + (self.key_text() if key == "_key" else lab))
+            return Text("    " + lab)                # action
+
+        def selected(self):
+            ol = self.query_one("#menu", OptionList)
+            i = ol.highlighted
+            return (i, self.items[i]) if i is not None and 0 <= i < len(self.items) else (None, None)
+
+        def update_help(self):
+            _, it = self.selected()
+            self.query_one("#help", Static).update(it["help"] if it and it["help"] else "")
+
+        def on_option_list_option_highlighted(self, ev):
+            if ev.option_list.id == "menu":
+                if ev.option_index is not None:
+                    self.sel[self.current()] = ev.option_index
+                self.update_help()
+
+        def on_option_list_option_selected(self, ev):
+            if ev.option_list.id == "menu":
+                self.run_worker(self.activate(), exclusive=True, group="dialog")      # dialogs wait for an answer: must run in a worker
+
+        async def activate(self):
+            i, it = self.selected()
+            if it is None:
+                return
+            k, key = it["kind"], it["key"]
+            if k == "menu":
+                self.stack.append(key)
+                self.render_menu()
+            elif k == "bool":
+                self.set_value(key, not self.cfg[key])
+            elif k in ("int", "str"):
+                await self.edit_value(it)
+            elif k == "choice":
+                lab_opts = [(o, o) for o in it["options"]]
+                v = await self.push_screen_wait(ChoiceScreen(it["label"], lab_opts, self.cfg[key]))
+                if v is not None:
+                    self.set_value(key, v)
+            elif k == "probe":
+                opts = [("none", "")] + [("%s   %s   %s" % (p["serial"], p["version"], p["chip"]), p["serial"]) for p in self.probes]
+                if self.cfg[key] and all(self.cfg[key] != v for _, v in opts):
+                    opts.append(("%s   (not connected)" % self.cfg[key], self.cfg[key]))
+                v = await self.push_screen_wait(ChoiceScreen(it["label"], opts, self.cfg[key]))
+                if v is not None:
+                    self.set_value(key, v)
+            elif k == "action":
+                await self.do_item_action(key)
+
+        def set_value(self, key, value):
+            trial = dict(self.cfg, **{key: value})
+            errs = C.validate_config(trial)
+            if errs:
+                self.say("not changed: " + "; ".join(errs))
+                self.notify("; ".join(errs), severity="error")
+                return False
+            self.cfg = trial
+            self.persist()
+            self.render_menu()
+            return True
+
+        async def edit_value(self, it):
+            key, kind = it["key"], it["kind"]
+
+            def check(text):
+                try:
+                    val = int(text) if kind == "int" else (text.strip().upper() if it.get("upper") else text.strip())
+                except ValueError:
+                    return "must be a whole number"
+                if kind == "int" and not (it["lo"] <= val <= it["hi"]):
+                    return "must be %d to %d" % (it["lo"], it["hi"])
+                errs = C.validate_config(dict(self.cfg, **{key: val}))
+                return errs[0] if errs else ""
+
+            raw = await self.push_screen_wait(ValueScreen(it["label"], str(self.cfg[key]), it["help"], check))
+            if raw is not None:
+                self.set_value(key, int(raw) if kind == "int" else (raw.strip().upper() if it.get("upper") else raw.strip()))
+
+        async def do_item_action(self, key):
+            if key == "newkey":
+                if await self.push_screen_wait(ConfirmScreen("Replace the AUTH key?\n\nBoth boards must be rebuilt and reflashed afterwards,\nolder firmware can no longer talk to the new one.")):
+                    self.regenerate(new_key=True)
+                    self.say("new AUTH key " + self.key_text())
+                    self.render_menu()
+            elif key == "rescan":
+                await self.action_rescan()
+            elif key == "build":
+                self.action_build()
+            elif key == "flash":
+                self.action_flash()
+            elif key == "flash_all":
+                self.action_flash_all()
+            elif key == "clean":
+                self.action_clean()
+            elif key == "memory":
+                self.show_tab("tab_mem")
+            elif key == "gen":
+                changed = self.regenerate()
+                self.say("generated: " + (", ".join(changed) if changed else "up to date"))
+            elif key == "defconfig":
+                if await self.push_screen_wait(ConfirmScreen("Reset all options to the defaults?\n(the ST-Link choice is kept)")):
+                    keep = {k: self.cfg[k] for k in ("sat_serial", "gs_serial")}
+                    self.cfg = dict(C.DEFAULT_CONFIG, **keep)
+                    self.persist()
+                    self.render_menu()
+
+        # ------------------------------------------------------------ keys
+        def action_back(self):
+            if self.tabs().active != "tab_cfg":
+                self.show_tab("tab_cfg")
+            elif len(self.stack) > 1:
+                self.stack.pop()
+                self.render_menu()
+
+        def action_toggle(self):
+            _, it = self.selected()
+            if it and it["kind"] == "bool" and self.tabs().active == "tab_cfg":
+                self.set_value(it["key"], not self.cfg[it["key"]])
+
+        def action_set_bool(self, value: bool):
+            _, it = self.selected()
+            if it and it["kind"] == "bool" and self.tabs().active == "tab_cfg":
+                self.set_value(it["key"], value)
+
+        def action_item_help(self):
+            _, it = self.selected()
+            if it:
+                self.run_worker(self.push_screen_wait(HelpScreen(it["label"], it["help"] or "(no help text)")), exclusive=True, group="dialog")
+
+        def action_save(self):
+            self.persist()
+            self.notify("saved " + os.path.basename(C.CONFIG_PATH) + " and generated/")
+
+        def show_tab(self, name: str):
+            self.set_focus(None)
+            self.tabs().active = name
+            if name == "tab_cfg":
+                self.query_one("#menu", OptionList).focus()
+
+        def action_tab(self, name: str):
+            self.show_tab(name)
+
+        async def action_rescan(self):
+            await self.rescan_probes()
+            self.render_menu()
+            self.notify("%d ST-Link probe(s) found" % len(self.probes))
+
+        async def action_refresh_stats(self):
+            await self.refresh_memory()
+            self.notify("Memory statistics refreshed")
+
+        def action_quit_app(self):
+            self.persist()
+            self.exit()
+
+        # ------------------------------------------------------------ probes
         async def rescan_probes(self):
             self.probes = await asyncio.to_thread(C.scan_probes)
-            self._loading = True
-            for key in ("sat_serial", "gs_serial"):
-                sel = self.query_one("#" + key, Select)
-                cur = self.cfg[key]
-                sel.set_options(self._probe_options(cur))
-                if cur:
-                    sel.value = cur
-                else:
-                    sel.clear()
-            self.call_after_refresh(self._done_loading)
-            self.query_one("#probe_count", Static).update(
-                "%d ST-Link probe(s) connected" % len(self.probes))
+            self.say("%d ST-Link probe(s) connected" % len(self.probes))
 
-        def _done_loading(self):
-            self._loading = False
-
+        # ------------------------------------------------------------ memory tab
         async def refresh_memory(self):
             stats = await asyncio.to_thread(lambda: {k: C.target_stats(k) for k in C.TARGETS})
             for k, st in stats.items():
@@ -319,112 +515,7 @@ def build_app():
                 nl.update("nuttx/nuttx.bin not built  (make nuttx)")
                 nb.update(total=100, progress=0)
 
-        # ----------------------------------------------------------------- events
-        def on_checkbox_changed(self, event: Checkbox.Changed):
-            key = (event.checkbox.id or "")[4:]
-            if self._loading or key not in self.CHECKS:
-                return
-            self.cfg[key] = bool(event.value)
-            self.persist()
-
-        def on_select_changed(self, event: Select.Changed):
-            if self._loading:
-                return
-            v = event.value
-            if event.select.id in ("sat_serial", "gs_serial"):
-                self.cfg[event.select.id] = "" if (v is BLANK or v is None) else str(v)
-                self.persist()
-            elif event.select.id == "cfg_frontend" and v is not BLANK and v is not None:
-                self.cfg["frontend"] = str(v)
-                self.persist()
-
-        def on_input_changed(self, event: Input.Changed):
-            key = (event.input.id or "")[4:]
-            if self._loading or key not in self.TEXTS:
-                return
-            text = event.value.strip()
-            try:
-                value = int(text) if key in self.INTS else text.upper()
-            except ValueError:
-                self.query_one("#cfg_error", Static).update("%s must be a number" % key)
-                return
-            trial = dict(self.cfg, **{key: value})
-            errs = C.validate_config(trial)
-            if errs:
-                self.query_one("#cfg_error", Static).update("; ".join(errs))
-                return
-            self.cfg[key] = value
-            self.persist()
-
-        async def on_button_pressed(self, event: Button.Pressed):
-            bid = event.button.id
-            if bid == "rescan":
-                await self.action_rescan()
-            elif bid == "act_build":
-                self.action_build()
-            elif bid == "act_flash":
-                self.action_flash()
-            elif bid == "act_flash_all":
-                self.action_flash_all()
-            elif bid == "act_clean":
-                self.action_clean()
-            elif bid == "act_save":
-                self.action_save()
-            elif bid == "act_gen":
-                changed = self.regenerate()
-                self.notify("generated: " + (", ".join(changed) if changed else "already up to date"))
-            elif bid == "act_defaults":
-                self.action_defaults()
-            elif bid == "act_newkey":
-                self.action_newkey()
-
-        # ---------------------------------------------------------------- actions
-        def show_tab(self, name: str):
-            # A focused widget inside the old pane pulls the tab view back to that pane,
-            # so drop focus before switching.
-            self.set_focus(None)
-            self.tabs().active = name
-
-        def action_tab(self, name: str):
-            self.show_tab(name)
-
-        async def action_rescan(self):
-            await self.rescan_probes()
-            self.notify("%d ST-Link probe(s) found" % len(self.probes))
-
-        async def action_refresh_stats(self):
-            await self.refresh_memory()
-            self.notify("Memory statistics refreshed")
-
-        def action_defaults(self):
-            keep = {k: self.cfg[k] for k in ("sat_serial", "gs_serial")}
-            self.cfg = dict(C.DEFAULT_CONFIG, **keep)
-            self._loading = True
-            self.load_widgets()
-            self._loading = False
-            self.persist()
-            self.notify("options reset to the defaults (probes kept)")
-
-        def action_newkey(self):
-            import time
-            now = time.monotonic()
-            if now - self._newkey_armed > 6.0:
-                self._newkey_armed = now
-                self.notify("Press 'New AUTH key' again within 6 s to confirm: both boards must be rebuilt and reflashed",
-                            severity="warning")
-                return
-            self._newkey_armed = 0.0
-            self.regenerate(new_key=True)
-            self.notify("new AUTH key generated: rebuild and reflash BOTH boards", severity="warning")
-
-        def action_save(self):
-            self.persist()
-            self.notify("Saved " + os.path.basename(C.CONFIG_PATH))
-
-        def action_quit_app(self):
-            self.persist()
-            self.exit()
-
+        # ------------------------------------------------------------ build / flash
         def action_build(self):
             self.start("Build", C.build_steps(self.cfg))
 
@@ -440,7 +531,7 @@ def build_app():
         def _flash(self, with_cpu1):
             steps, problems = C.flash_steps(self.cfg, with_cpu1=with_cpu1)
             if problems:
-                self.notify("; ".join(problems), severity="error")
+                self.notify("; ".join(problems) + "  (Menu > Programmer)", severity="error")
                 return
             if with_cpu1 and not os.path.exists(C.NUTTX_BIN):
                 self.notify("nuttx/nuttx.bin missing (make nuttx first)", severity="error")
@@ -452,15 +543,10 @@ def build_app():
                 self.notify("A command is already running", severity="warning")
                 return
             if not steps:
-                self.notify("Nothing to do: no target selected", severity="warning")
+                self.notify("Nothing to do: no target selected (Menu > Targets)", severity="warning")
                 return
-            self.set_busy(True)
+            self.busy = True
             self.run_worker(self.run_steps(title, steps), exclusive=False)
-
-        def set_busy(self, busy):
-            self.busy = busy
-            for bid in ("act_build", "act_flash", "act_flash_all", "act_clean"):
-                self.query_one("#" + bid, Button).disabled = busy
 
         async def run_steps(self, title, steps):
             self.show_tab("tab_out")
@@ -508,12 +594,13 @@ def build_app():
                 log.write(Text("*** DONE: " + title, style="bold green"))
             self.set_status(("done: " if ok else "FAILED: ") + title)
             await self.refresh_memory()
-            self.set_busy(False)
+            self.busy = False
             self.notify(("Done: " if ok else "Failed: ") + title, severity="information" if ok else "error")
 
     return S2S2App
 
 
+# ---------------------------------------------------------------------------------------------------- batch modes
 def configure_cli(defaults=False, new_key=False):
     """make configure / defconfig / newkey: generate the files (and the key when missing) without a UI."""
     cfg = dict(C.DEFAULT_CONFIG, **{k: C.load_config()[k] for k in ("sat_serial", "gs_serial")}) if defaults else C.load_config()
@@ -540,6 +627,34 @@ def dump():
     print(C.nuttx_line())
 
 
+def run_interactive():
+    """Start the menuconfig; on any problem say why, write the details to .s2s2_tui_error.log and return 2."""
+    log = os.path.join(C.REPO, ".s2s2_tui_error.log")
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        print("menuconfig needs a terminal. Without one use: make configure | build | flash | memstat | probes")
+        return 2
+    cols, rows = shutil.get_terminal_size((80, 24))
+    if cols < MIN_COLS or rows < MIN_ROWS:
+        print("The terminal is too small for the menu (%dx%d, need at least %dx%d): make the window bigger and run `make` again." %
+              (cols, rows, MIN_COLS, MIN_ROWS))
+        return 2
+    try:
+        app = build_app()()
+    except ImportError as e:
+        print("Textual is not available (%s).\nRun: python3 -m venv tools/.venv && tools/.venv/bin/pip install -r tools/requirements.txt\n"
+              "or use the batch targets: make configure | build | flash | memstat" % e)
+        return 2
+    try:
+        app.run()
+    except Exception:
+        with open(log, "w") as f:
+            traceback.print_exc(file=f)
+        print("The menu stopped with an error. Details: %s\nYou can still use: make configure | defconfig | build | flash | memstat" % log)
+        print(traceback.format_exc().strip().splitlines()[-1])
+        return 1
+    return 0
+
+
 def main(argv):
     if "--dump" in argv:
         dump()
@@ -564,16 +679,7 @@ def main(argv):
         return 0
     if "--batch" in argv:
         return C.batch(argv[argv.index("--batch") + 1])
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
-        print("not a terminal -- use --batch build|flash|flash-all|clean, --memstat or --probes")
-        return 2
-    try:
-        build_app()().run()
-    except ImportError as e:
-        print("Textual is not available (%s).\nRun with: tools/.venv/bin/python tools/s2s2_tui.py\n"
-              "or: python3 -m pip install textual" % e)
-        return 2
-    return 0
+    return run_interactive()
 
 
 if __name__ == "__main__":

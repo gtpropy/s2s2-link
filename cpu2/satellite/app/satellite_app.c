@@ -397,10 +397,12 @@ void Satellite_CW_Test_Begin(void) {
 }
 
 void Satellite_CW_Test_Cycle(uint32_t unit_ms, uint32_t tone_ms) {
-    Satellite_CW_CarrierOn();
-    CPU2_Delay_Ms(tone_ms);
-    Satellite_CW_CarrierOff();
-    CPU2_Delay_Ms(400);
+    if (tone_ms != 0) {                           /* tuning carrier (for a spectrum analyzer): a CW decoder reads it as a dash, "T" */
+        Satellite_CW_CarrierOn();
+        CPU2_Delay_Ms(tone_ms);
+        Satellite_CW_CarrierOff();
+        CPU2_Delay_Ms(400);
+    }
     Satellite_CW_SendString("HELLO", unit_ms);
     CPU2_Delay_Ms(1500);                          /* quiet gap before the next round */
 }

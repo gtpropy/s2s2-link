@@ -41,6 +41,8 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import saf_tool                                   # tnc2_to_body (same directory)
+
 try:
     import serial
 except ImportError:                     # pragma: no cover
@@ -70,6 +72,8 @@ OBC_SYNC = b"\xC5" * 8 + b"\xA7"
 OBC_CHUNK, OBC_STATUS, OBC_RESET, OBC_ERASE, OBC_STORE, OBC_SENDF, OBC_READF, OBC_SETNAME, OBC_INFO = 1, 2, 3, 4, 5, 6, 7, 8, 9
 OBC_RATE = 10        # raw air-rate test: seq = gap ms between packets, total = packet count
 OBC_CWTEST = 11      # continuous CW "HELLO" for a spectrum analyzer: seq = seconds (0 = stop)
+OBC_SAF = 12         # store-and-forward journal: seq 0 = status line, n = record n, 0xFFFF = empty the journal
+OBC_INJECT = 13      # hand the satellite's digipeater a frame body as if it had been received over the air
 FLASH_BYTES = 44 * 1024                # LittleFS on CPU1 flash pages 72..99 = 56 KB; leave room for copy-on-write
 FLASH_CHUNKS = (FLASH_BYTES + 127) // 128
 
@@ -565,7 +569,7 @@ def set_image(raw, name, mode="flash"):
 # tests
 # --------------------------------------------------------------------------------------
 RUN = {"lock": threading.Lock(), "thread": None, "abort": threading.Event(), "name": None}
-STATE = {"link": None, "image": None, "sdr": None, "rate": None, "cwtest": None, "sdrimage": None, "imageloop": None, "image_rx": None, "gs_log": []}
+STATE = {"link": None, "image": None, "sdr": None, "rate": None, "cwtest": None, "sdrimage": None, "imageloop": None, "digi": None, "image_rx": None, "gs_log": []}
 PROG = {"total": 0, "acked": set(), "got": set(), "stored": set(), "read": set(), "phase": "", "mode": "", "led": None}
 
 
@@ -1420,7 +1424,7 @@ def test_cwtest(cfg, abort):
     if not OBC.connected():
         raise RuntimeError("connect the Nucleo's ST-Link VCP port first")
     secs = max(5, min(43200, int(cfg.get("seconds", 120))))
-    mode = 1 if str(cfg.get("mode", "cw")).lower() == "gmsk" else 0
+    mode = {"gmsk": 1, "carrier": 2}.get(str(cfg.get("mode", "cw")).lower(), 0)
     heard = 0
     log("CW HELLO TEST: waiting until the satellite answers (it is deaf while a CW beacon is being sent) ...")
     # Wait for CPU2's heartbeat first: a request that reaches CPU1 before CPU2 has booted is treated by CPU2 as a leftover
@@ -1462,14 +1466,229 @@ def test_cwtest(cfg, abort):
     set_result("cwtest", {"test": "cwtest", "when": now(), "verdict": "PASS", "seconds": secs, "gs_decoded_hello": heard})
 
 
-TESTS = {"link": test_link, "image": test_image, "sdr": test_sdr, "rate": test_rate, "cwtest": test_cwtest, "sdrimage": test_sdrimage, "imageloop": test_imageloop}
+# --------------------------------------------------------------------------------------
+# digipeater / store and forward (CPU2 digipeater, CPU1 flash journal): injected frames, store listing, optional SDR check
+# --------------------------------------------------------------------------------------
+DIGI_REASONS = ["repeated", "disabled", "malformed", "not a UI frame", "no unused path entry", "next hop is not us / alias / WIDE2-N",
+                "our own source", "loop (our call already used)", "denied station", "duplicate", "hop limit", "too long for the radio packet",
+                "global rate limit", "same station too soon"]
+
+
+def digi_identity():
+    """Satellite call sign / SSID / alias as configured in the TUI (.s2s2.config), defaults if the file is missing."""
+    c = {"sat_call": "9N2SJ", "sat_ssid": 1, "digi_alias": "ARISS"}
+    try:
+        c.update({k: v for k, v in json.load(open(os.path.join(ROOT, ".s2s2.config"))).items() if k in c})
+    except (OSError, ValueError):
+        pass
+    me = c["sat_call"] + ("-%d" % c["sat_ssid"] if c["sat_ssid"] else "")
+    return me, c["digi_alias"] or c["sat_call"]
+
+
+def ax25_text(fr):
+    """KISS frame (destination, source, via..., control, PID, info; no flags / FCS) -> TNC2 text 'SRC>DEST,VIA*:info'."""
+    def addr(b):
+        call = "".join(chr(x >> 1) for x in b[:6]).strip()
+        ss = (b[6] >> 1) & 15
+        return call + ("-%d" % ss if ss else ""), bool(b[6] & 0x80)
+    if len(fr) < 16:
+        return None
+    dest, _ = addr(fr[0:7])
+    src, _ = addr(fr[7:14])
+    vias, pos, last = [], 14, bool(fr[13] & 1)
+    while not last and pos + 9 <= len(fr):
+        v, h = addr(fr[pos:pos + 7])
+        vias.append((v, h))
+        last = bool(fr[pos + 6] & 1)
+        pos += 7
+    star = max([i for i, (_, h) in enumerate(vias) if h], default=-1)
+    path = "".join("," + v + ("*" if i == star else "") for i, (v, _) in enumerate(vias))
+    return f"{src}>{dest}{path}:" + bytes(fr[pos + 2:]).decode("latin-1")
+
+
+def saf_read(abort=None):
+    """Journal on CPU1: (status line, [records]); a record = dict(n, id, len, hops_left, fwd_count, ttl_s, text)."""
+    with OBC.lock:
+        OBC.flashdata.pop(0, None)
+    mk = OBC.mark()
+    OBC.send(OBC_SAF, 0)
+    st = OBC.wait_ack(OBC_SAF, 0, mk, 5, abort)
+    with OBC.lock:
+        fd = OBC.flashdata.get(0)
+    line = fd[1].decode(errors="replace") if (fd and st == 0) else None
+    recs = []
+    n = 1
+    while line and n <= 16:
+        with OBC.lock:
+            OBC.flashdata.pop(n, None)
+        mk = OBC.mark()
+        OBC.send(OBC_SAF, n)
+        st = OBC.wait_ack(OBC_SAF, n, mk, 5, abort)
+        with OBC.lock:
+            fd = OBC.flashdata.get(n)
+        if st != 0 or not fd:
+            break
+        d = fd[1]
+        recs.append({"n": n, "id": d[0] | d[1] << 8, "len": d[2], "hops_left": d[3], "fwd_count": d[4], "ttl_s": d[5] | d[6] << 8,
+                     "text": ax25_text(d[7:]) if len(d) > 7 else ""})
+        n += 1
+    return line, recs
+
+
+def digi_inject(text, abort=None, timeout=75):
+    """Hand one frame (TNC2 text) to the satellite digipeater through CPU1. Returns (status, meaning); status 0 = repeated."""
+    body = saf_tool.tnc2_to_body(text)
+    mk = OBC.mark()
+    OBC.send(OBC_INJECT, 0, 0, body)
+    st = OBC.wait_ack(OBC_INJECT, 0, mk, timeout, abort)
+    if st is None:
+        return None, "no answer (the satellite answers only between beacons; the digipeater may be off)"
+    if st == 0:
+        return 0, "repeated"
+    if 0x20 < st < 0x20 + len(DIGI_REASONS):
+        return st, "not repeated: " + DIGI_REASONS[st - 0x20]
+    return st, {0x07: "CPU2 did not answer within 50 s", 0x02: "bad frame"}.get(st, f"status 0x{st:02X}")
+
+
+class DwCapture:
+    """rtl_fm | direwolf (stock decoder) with the KISS port read into a list of (time, frame bytes)."""
+
+    def __init__(self, freq, gain):
+        conf = os.path.join(ROOT, "tools", "testbench", "direwolf_s2s2_4800.conf")
+        pipe = (f"rtl_fm -f {freq:.6f}M -s 48000 -g {gain} 2>/dev/null | "
+                f"direwolf -c '{conf}' -r 48000 -n 1 -B 4800 -g -t 0 -")
+        self.proc = subprocess.Popen(pipe, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
+        self.frames = []
+        self.stop_ev = threading.Event()
+        threading.Thread(target=self._reader, daemon=True).start()
+
+    def _reader(self):
+        s = None
+        for _ in range(60):
+            try:
+                s = socket.create_connection(("127.0.0.1", 8001), timeout=3)
+                break
+            except OSError:
+                time.sleep(0.5)
+        if s is None:
+            log("Direwolf's KISS port 8001 never opened", "err")
+            return
+        s.settimeout(1.0)
+        buf = b""
+        while not self.stop_ev.is_set():
+            try:
+                d = s.recv(4096)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            if not d:
+                break
+            buf += d
+            while True:
+                a = buf.find(b"\xc0")
+                b = buf.find(b"\xc0", a + 1) if a >= 0 else -1
+                if a < 0 or b < 0:
+                    break
+                fr, buf = buf[a + 1:b], buf[b:]
+                if len(fr) > 1:
+                    fr = fr[1:].replace(b"\xdb\xdc", b"\xc0").replace(b"\xdb\xdd", b"\xdb")
+                    self.frames.append((now(), fr))
+                    t = ax25_text(fr)
+                    if t:
+                        BUS.publish("sdr", msg="Direwolf: " + t)
+        s.close()
+
+    def texts(self):
+        return [t for t in (ax25_text(f) for _, f in list(self.frames)) if t]
+
+    def close(self):
+        self.stop_ev.set()
+        _stop_pipeline(self.proc)
+
+
+def test_digi(cfg, abort):
+    """Digipeater + store-and-forward test through the VCP, no ground station needed. Injects frames into the satellite's
+    digipeater (as if they had been heard on 437.375 MHz) and checks, for each, that the decision is the expected one: repeat
+    (alias, WIDE2-N with trace), duplicate, fill-in tier, no path, own source, loop, hop limit. Then reads the journal that
+    CPU1 keeps in flash (hops left, sends so far, time left, bytes). With `sdr` set an RTL-SDR + Direwolf also checks that the
+    repeats really appear on 435.000 MHz with the rewritten path."""
+    if not OBC.connected():
+        raise RuntimeError("connect the Nucleo's ST-Link VCP port first")
+    me, alias = digi_identity()
+    tag = "%04d" % (int(now()) % 10000)
+    wide = [
+        ("alias is repeated",              f"T1TEST>APZS2S,{alias}:>digi test alias {tag}",        0,  f"T1TEST>APZS2S,{me}*:>digi test alias {tag}"),
+        ("WIDE2-2: trace + one hop used",  f"T2TEST>APZS2S,WIDE2-2:>digi test wide2-2 {tag}",     0,  f"T2TEST>APZS2S,{me}*,WIDE2-1:>digi test wide2-2 {tag}"),
+        ("same frame again = duplicate",   f"T1TEST>APZS2S,{alias}:>digi test alias {tag}",        9,  None),
+        ("WIDE1-1 is the fill-in tier",    f"T3TEST>APZS2S,WIDE1-1:>digi test fill-in {tag}",      5,  None),
+        ("no path = heard direct",         f"T4TEST>APZS2S:>digi test direct {tag}",               4,  None),
+        ("our own source is never repeated", f"{me}>APZS2S,WIDE2-2:>digi test own source {tag}",   6,  None),
+        ("loop: our call already used",    f"T5TEST>APZS2S,{me}*,WIDE2-1:>digi test loop {tag}",   7,  None),
+        ("WIDE2-3 is above the hop limit", f"T6TEST>APZS2S,WIDE2-3:>digi test hops {tag}",         10, None),
+    ]
+    log(f"DIGIPEATER TEST: satellite {me}, alias {alias}, {len(wide)} frames injected through CPU1 (tag {tag})")
+    if not OBC.ready(abort):
+        raise RuntimeError("the satellite never answered on the VCP")
+    dw = None
+    if cfg.get("sdr"):
+        ok_sdr, why = SDR.check_tuner()
+        if not ok_sdr:
+            raise RuntimeError("SDR not usable: " + " | ".join(why[:3]) + " (unplug and replug the dongle)")
+        freq, gain = float(cfg.get("freq_mhz", 434.9936)), float(cfg.get("gain", 40))
+        log(f"  SDR + Direwolf listening at {freq} MHz")
+        dw = DwCapture(freq, gain)
+        time.sleep(4)
+    line0, before = saf_read(abort)
+    log(f"  journal before: {line0 or 'no answer from the journal (store and forward off?)'}")
+    rows = []
+    try:
+        for i, (name, text, want, air) in enumerate(wide, 1):
+            if abort.is_set():
+                break
+            t0 = now()
+            st, why = digi_inject(text, abort)
+            ok = (st == (0 if want == 0 else 0x20 + want))
+            rows.append({"n": i, "name": name, "frame": text, "expected": "repeated" if want == 0 else DIGI_REASONS[want],
+                         "got": why, "ok": ok, "air": air, "seen": None, "wait_s": round(now() - t0, 1)})
+            log(f"  {i}. {name}: {why} {'(as expected)' if ok else '(EXPECTED ' + rows[-1]['expected'] + ')'}", "ok" if ok else "err")
+            BUS.publish("progress", test="digi", done=i, total=len(wide))
+        if dw is not None:
+            time.sleep(6)
+            heard = dw.texts()
+            for r in rows:
+                if r["air"]:
+                    r["seen"] = any(h.startswith(r["air"]) for h in heard)
+                    log(f"  over the air: {r['air']} -> {'DECODED by Direwolf' if r['seen'] else 'not heard'}", "ok" if r["seen"] else "err")
+            appended = [h for h in heard if "MEMORY OBJECTS" in h]
+            if appended:
+                log(f"  store statistics appended by the satellite: {appended[0][-150:]}", "ok")
+    finally:
+        if dw is not None:
+            dw.close()
+    time.sleep(3)                                          # CPU2 reports a new record to the journal within a second or two
+    line1, after = saf_read(abort)
+    repeats = sum(1 for r in rows if r["expected"] == "repeated" and r["ok"])
+    total_b = sum(x["len"] for x in after)
+    log(f"  journal after: {line1 or 'no answer'}")
+    for x in after:
+        log(f"  MEMORY OBJECTS: #{x['n']} id={x['id']} len={x['len']} hops_left={x['hops_left']} forwarded={x['fwd_count']} ttl_left={x['ttl_s']}s | {x['text'][:90]}")
+    log(f"  STORED {len(after)} msg, {total_b} B", "ok")
+    store_ok = None if line1 is None else (len(after) >= min(repeats, len(before) + repeats))
+    ok = bool(rows) and all(r["ok"] for r in rows) and (store_ok in (True, None)) and all(r["seen"] in (True, None) for r in rows)
+    set_result("digi", {"test": "digi", "when": now(), "verdict": "PASS" if ok else "FAIL", "satellite": me, "alias": alias, "rows": rows,
+                        "journal": line1, "stored": len(after), "stored_bytes": total_b, "objects": after, "repeats": repeats,
+                        "sdr": bool(cfg.get("sdr"))})
+
+
+TESTS = {"link": test_link, "image": test_image, "sdr": test_sdr, "rate": test_rate, "cwtest": test_cwtest, "sdrimage": test_sdrimage, "imageloop": test_imageloop, "digi": test_digi}
 
 
 def start_test(name, cfg):
     """Run one test in a thread (only one at a time). Clears the satellite replay floor first (RESET frame)."""
     if not RUN["lock"].acquire(blocking=False):
         raise RuntimeError(f"test '{RUN['name']}' is still running")
-    if name not in ("cwtest", "sdrimage", "imageloop") and not GS.connected():     # these tests only need the Nucleo (and the SDR); the GS is just a cross-check
+    if name not in ("cwtest", "sdrimage", "imageloop", "digi") and not GS.connected():     # these tests only need the Nucleo (and the SDR); the GS is just a cross-check
         RUN["lock"].release()
         raise RuntimeError("connect the GS serial port first")
     RUN["abort"].clear()
@@ -1591,7 +1810,7 @@ def get_status(fresh=False):
                       "fit": IMG["fit"], "type": kind_of(IMG["bytes"])[0] if IMG["bytes"] else None,
                       "fits_flash": (math.ceil(len(IMG["bytes"]) / CHUNK) <= FLASH_CHUNKS) if IMG["bytes"] else None},
             "results": {k: ({kk: vv for kk, vv in v.items() if kk != "raw_frames"} if v else None) for k, v in STATE.items()
-                        if k in ("link", "image", "sdr", "rate", "cwtest", "sdrimage", "imageloop")}}
+                        if k in ("link", "image", "sdr", "rate", "cwtest", "sdrimage", "imageloop", "digi")}}
 
 
 def save_report(note=""):
@@ -1631,7 +1850,7 @@ def save_report(note=""):
             "# one frame per line, hex: 7 B destination, 7 B source, control, PID, information field (what Direwolf delivered over KISS)\n"
             + "\n".join(sdrimg["raw_frames"]) + "\n")
     rows = ""
-    for k in ("link", "image", "sdr", "rate", "sdrimage"):
+    for k in ("link", "image", "sdr", "rate", "sdrimage", "digi"):
         r = st["results"].get(k)
         if not r:
             rows += f"<tr><td>{k}</td><td>not run</td><td></td></tr>"
@@ -1759,6 +1978,20 @@ class H(BaseHTTPRequestHandler):
             if p == "/api/obc/disconnect":
                 OBC.disconnect()
                 return self._send(200, {"ok": True})
+            if p == "/api/digi/inject":
+                if RUN["name"]:
+                    raise RuntimeError(f"test '{RUN['name']}' is running")
+                st, why = digi_inject(self._json()["text"])
+                return self._send(200, {"status": st, "result": why})
+            if p == "/api/digi/store":
+                if RUN["name"]:
+                    raise RuntimeError(f"test '{RUN['name']}' is running")
+                line, recs = saf_read()
+                return self._send(200, {"journal": line, "objects": recs, "stored": len(recs), "bytes": sum(x["len"] for x in recs)})
+            if p == "/api/digi/clear":
+                mk = OBC.mark()
+                OBC.send(OBC_SAF, 0xFFFF)
+                return self._send(200, {"status": OBC.wait_ack(OBC_SAF, 0xFFFF, mk, 8), "note": "journal emptied; reset CPU2 so it forgets its RAM copy"})
             if p == "/api/test/start":
                 c = self._json()
                 start_test(c["name"], c)

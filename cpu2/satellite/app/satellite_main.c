@@ -630,7 +630,7 @@ static void Obc_Ring_Service(void)
             } else {
                 Satellite_CW_Test_Begin();
                 while (o->cw_test_req == s_cw_test_seen && o->cw_test_s != 0U && (HAL_GetTick() - t0) < secs * 1000UL) {
-                    Satellite_CW_Test_Cycle(80U, 1000U);
+                    Satellite_CW_Test_Cycle(80U, (o->cw_test_mode == 2U) ? 1000U : 0U);   /* mode 2 = carrier first; default none, a decoder reads it as a dash ("T") */
                     o->cw_test_words++;
                     o->cpu2_beat++;
                     Obc_Led(OBC_LED_YELLOW);

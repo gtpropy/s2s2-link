@@ -11,6 +11,7 @@ policy are ordinary C running on the microcontroller (the GMSK modem itself is t
 | Store-and-forward memory (hop budget, schedule, TTL) | `cpu2/common/digipeater/saf.{h,c}` |
 | Journal in CPU1 flash + mailbox | `apps/examples/s2s2obc/s2s2obc_saf.c`, `cpu2/satellite/ipc/saf_shared.h` |
 | PC tool (status, list, inject a frame) | `tools/testbench/saf_tool.py` |
+| Test bench page "Digipeater + store and forward" | `tools/testbench/server.py` (`test_digi`, `/api/digi/*`), `index.html` |
 | Re-framing of a received frame | `Protocol_CreateRawPacket()` in `mission/protocol.c` |
 | Ground-station test traffic | console command `DIGI SRC>DEST,VIA:text` |
 | Settings | TUI / `.s2s2.config` -> `generated/s2s2_config.h` (`S2S2_DIGI_*`) |
@@ -182,8 +183,20 @@ and does nothing (no unused entry), node 1 hearing its own copy does nothing (lo
 **Settings** (TUI "Store and forward"): on/off, send immediately too, sends per message (3), seconds between sends (900), lifetime in minutes (360).
 Cost: +2.9 KB on the satellite (now 95 % of the 56 KB) and about 1 KB of CPU1 flash (`nuttx.bin` 144,140 of 147,456 bytes).
 
+**Statistics in the message (test option, `S2S2_SAF_APPEND_STATS`).** Done in the satellite firmware (`append_stats()` in `satellite_digi.c`): the frame that is repeated right away
+gets the state of the store appended to its text, cut if it would not fit the radio packet; the copy in the store stays unchanged:
+`ridam and damri and ryan and nayr | MEMORY OBJECTS: #1 id=1 len=56 hops_left=0 forwarded=0 ttl_left=21600s | STORED 1 msg, 56 B` (read back from the satellite's transmit buffer over SWD).
+`saf_tool.py inject` also prints the stored objects afterwards (`MEMORY OBJECTS: #n ...`, the stored bytes, `STORED n msg, N B`). It alters other stations' text: use it for tests only.
+
 **Another meaning of "hopping"** is radio frequency hopping (the SX126x has LR-FHSS). That is a different layer (it changes how a packet is modulated, not how
 a message travels) and is **not** implemented here.
+
+**Test bench.** `make testbench`, section "Digipeater + store and forward" (needs only the Nucleo's VCP, no ground station): *Run the digipeater test* injects 8 frames and checks each decision
+(alias and `WIDE2-2` repeated, duplicate, `WIDE1-1` fill-in, no path, own source, loop, hop limit), then lists the stored messages with hops left, times sent, time left and bytes; with the SDR
+box ticked an RTL-SDR + Direwolf also checks that the repeats are decoded on 435.000 MHz with the rewritten path. The buttons *Inject this frame*, *Show the stored messages* and *Clear the journal*
+do the same one at a time. The test frames use a `>` status text and the experimental destination `APZS2S`, so Dire Wolf's APRS checker has nothing to complain about (free text
+or the generic destination `APRS` give harmless warnings such as `Unknown APRS Data Type Indicator` / `Use of "APRS" in the destination field is obsolete`: they are about the content, the frame itself decoded fine).
+Run on the hardware: 8 of 8 cases as expected, 3 messages / 153 B in the journal.
 
 ## 6. Settings (TUI, "Satellite digipeater")
 
@@ -197,6 +210,7 @@ a message travels) and is **not** implemented here.
 | duplicate window | `S2S2_DIGI_DEDUPE_MS` | 30 s |
 | repeats per minute / burst | `S2S2_DIGI_RATE_PER_MIN`, `S2S2_DIGI_BURST` | 6 / 2 |
 | minimum time between two repeats of one station | `S2S2_DIGI_SRC_MIN_MS` | 10 s |
+| TEST: append the store statistics to the text of the frame repeated right away (`STATS` in the TUI) | `S2S2_SAF_APPEND_STATS` | off |
 
 Our call sign and SSID are the satellite's (`9N2SJ-1`). Try it from the ground station console: `DIGI K1ABC>APRS,ARISS:hello`,
 `DIGI K1ABC>APRS,WIDE2-2:!4237.14N/07120.83W-test`; the repeat appears as `K1ABC>APRS,9N2SJ-1*,WIDE2-1:...` in the GS log.

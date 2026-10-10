@@ -109,6 +109,20 @@ def main():
             print("no answer from CPU1")
         elif st == 0:
             print("REPEATED:", a.text)
+            time.sleep(3)                          # CPU2 reports the new record to CPU1's journal within a second or two
+            st2, d2 = transact(ser, 0x0C, 0)
+            print("JOURNAL:", d2[0].decode(errors="replace") if d2 else "no answer")
+            n, total = 1, 0
+            while True:
+                st3, d3 = transact(ser, 0x0C, n)
+                if not d3:
+                    break
+                r = d3[0]
+                total += r[2]
+                print("MEMORY OBJECTS: #%d id=%d len=%d hops_left=%d forwarded=%d ttl_left=%ds" % (n, r[0] | r[1] << 8, r[2], r[3], r[4], r[5] | r[6] << 8))
+                print("    ", repr(bytes(r[7:])))
+                n += 1
+            print("STORED %d msg, %d B" % (n - 1, total))
         elif st >= 0x20 and st - 0x20 < len(REASONS):
             print("not repeated: %s" % REASONS[st - 0x20])
         else:

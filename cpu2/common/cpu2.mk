@@ -125,9 +125,7 @@ COMMON_SRCS = \
 	$(COMMON)/system/rtc.c \
 	$(COMMON)/system/ll_port.c \
 	$(COMMON)/system/error_handler.c \
-	$(COMMON)/system/stm32_adv_trace.c \
-	$(COMMON)/system/stm32_tiny_vsnprintf.c \
-	$(COMMON)/system/stm32_trace_driver.c \
+	$(COMMON)/system/trace_stub.c \
 	$(COMMON)/vendor/st_radio/radio_fw.c \
 	$(COMMON)/vendor/st_radio/stm32_timer.c \
 	$(COMMON)/vendor/stm32wlxx_hal/Src/stm32wlxx_hal_rcc.c \

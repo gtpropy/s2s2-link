@@ -1,6 +1,7 @@
 #include "satellite_digi.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "s2s2_config.h"
@@ -25,6 +26,36 @@ static uint8_t s_out[DIGI_MAX_BODY];
 static uint32_t s_nextFwd;
 static bool s_restoring;
 static uint32_t s_restoreT0, s_restored;
+
+#if S2S2_SAF_ENABLE && S2S2_SAF_APPEND_STATS
+/* TEST FEATURE: the frame that is transmitted right away gets the state of the store appended to its text, e.g.
+ *   "hello | MEMORY OBJECTS: #1 id=1 len=56 hops_left=0 forwarded=0 ttl_left=21598s | STORED 3 msg, 168 B"
+ * so a receiver (Dire Wolf, a ground station) sees what the satellite keeps. The copy in the store stays unchanged. If the
+ * text does not fit the radio packet it is cut: the frame is never longer than DIGI_MAX_BODY. */
+static uint16_t append_stats(uint8_t *body, uint16_t len, int slot, uint32_t now_ms)
+{
+    char sfx[120];
+    uint32_t bytes = 0;
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < SAF_SLOTS; i++)
+        if (g_saf.slot[i].used) { n++; bytes += g_saf.slot[i].len; }
+    int k = 0;
+    if (slot >= 0 && g_saf.slot[slot].used) {
+        const SafSlot_t *m = &g_saf.slot[slot];
+        k = snprintf(sfx, sizeof(sfx), " | MEMORY OBJECTS: #%u id=%u len=%u hops_left=%u forwarded=%u ttl_left=%lus",
+                     (unsigned)(slot + 1), (unsigned)m->id, (unsigned)m->len, (unsigned)m->hops_left, (unsigned)m->fwd_count,
+                     (unsigned long)(Saf_TtlLeftMs(&g_saf, slot, now_ms) / 1000UL));
+    }
+    if (k < 0) k = 0;
+    int j = snprintf(sfx + k, sizeof(sfx) - (size_t)k, " | STORED %u msg, %lu B", (unsigned)n, (unsigned long)bytes);
+    if (j < 0) j = 0;
+    size_t total = (size_t)k + (size_t)j;
+    if (total >= sizeof(sfx)) total = sizeof(sfx) - 1U;
+    if ((uint32_t)len + total > DIGI_MAX_BODY) total = (DIGI_MAX_BODY > len) ? (size_t)(DIGI_MAX_BODY - len) : 0U;
+    memcpy(body + len, sfx, total);
+    return (uint16_t)(len + total);
+}
+#endif
 
 static void build_config(DigiConfig_t *c)
 {
@@ -190,6 +221,13 @@ static DigiResult_t digi_body(const uint8_t *body, uint16_t blen, uint32_t now_m
 #if S2S2_SAF_ENABLE
     uint8_t hops = Digi_HopsLeft(s_out, olen);
     int k = Saf_Store(&g_saf, s_out, olen, hops, now_ms, S2S2_SAF_IMMEDIATE ? S2S2_SAF_INTERVAL_MS : SAT_SAF_FIRST_MS);
+#if S2S2_SAF_APPEND_STATS
+    if (k < 0) {                                       /* already stored: report that copy */
+        for (uint8_t i = 0; i < SAF_SLOTS; i++)
+            if (g_saf.slot[i].used && g_saf.slot[i].len == olen && memcmp(g_saf.slot[i].body, s_out, olen) == 0) { k = i; break; }
+    }
+    olen = append_stats(s_out, olen, k, now_ms);       /* only the copy sent now; the store keeps the original */
+#endif
     uart1_printf("[SAF] %s (hops left %u, %u stored)\r\n", (k >= 0) ? "stored" : ((k == -1) ? "already stored" : "not stored"),
                  (unsigned)hops, (unsigned)Saf_Count(&g_saf));
 #endif

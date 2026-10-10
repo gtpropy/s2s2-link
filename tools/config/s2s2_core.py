@@ -56,7 +56,7 @@ DEFAULT_CONFIG = {
     "digi": True, "digi_alias": "ARISS", "digi_wide": True, "digi_max_n": 2, "digi_trace": True,
     "digi_dedupe_s": 30, "digi_rate_per_min": 6, "digi_burst": 2, "digi_src_min_s": 10,
     # store-and-forward: keep repeated frames (journal in CPU1 flash) and send them again later, hop budget from the WIDEn-N path
-    "saf": True, "saf_immediate": True, "saf_max_fwd": 3, "saf_fwd_interval_s": 900, "saf_ttl_min": 360,
+    "saf": True, "saf_immediate": True, "saf_append_stats": False, "saf_max_fwd": 3, "saf_fwd_interval_s": 900, "saf_ttl_min": 360,
     # probes
     "sat_serial": "", "gs_serial": "",
 }
@@ -103,6 +103,101 @@ def validate_config(cfg):
     if cfg["frontend"] not in FRONTENDS:
         errs.append("front end must be one of %s" % ", ".join(FRONTENDS))
     return errs
+
+
+# --------------------------------------------------------------------------
+# menu tree of the configuration (what the TUI shows, like NuttX's menuconfig)
+#   kind: menu (submenu) | bool | int | str | choice | probe | action | info
+#   dep : list of config keys that must be true for the item to be shown
+# --------------------------------------------------------------------------
+def _i(kind, key, label, help="", **kw):
+    d = {"kind": kind, "key": key, "label": label, "help": help}
+    d.update(kw)
+    return d
+
+
+MENUS = {
+    "main": ("S2S2 configuration", [
+        _i("menu", "targets", "Targets", "Which firmware images are built and flashed."),
+        _i("menu", "security", "Security: AUTH and the shared key", "Integrity check of short packets and the random key both images share."),
+        _i("menu", "build", "Build options", "Optimisation, logging, RF front end."),
+        _i("menu", "identity", "Identity: project name, call signs, SSIDs", "Call signs used in every AX.25 packet and in the CW beacon."),
+        _i("menu", "radio", "Radio frequencies, CW and beacon timing", "Downlink / uplink frequency and the Morse beacon."),
+        _i("menu", "digi", "Digipeater and store and forward", "The satellite repeats other stations' UI frames, keeps them and sends them again."),
+        _i("menu", "probes", "Programmer: ST-Link probes", "Which probe flashes which board."),
+        _i("menu", "actions", "Build, flash, clean, memory", "Run the build and flash steps with the configuration above."),
+    ]),
+    "targets": ("Targets", [
+        _i("bool", "build_sat", "Satellite image (cpu2/satellite)", "Build and flash the satellite's CPU2 firmware."),
+        _i("bool", "build_gs", "Ground station image (cpu2/ground_station)", "Build and flash the ground station's CPU2 firmware."),
+    ]),
+    "security": ("Security", [
+        _i("bool", "auth", "AUTH: integrity tag + replay counter on short packets",
+           "Every payload up to 107 bytes gets a 12-byte trailer (counter + tag). Both ends must use the same setting and the same key. "
+           "Off: plain Packet-Format packets."),
+        _i("info", "_key", "AUTH key"),
+        _i("action", "newkey", "<New AUTH key>  (rebuild and reflash BOTH boards afterwards)",
+           "Replaces the random 16-byte key in generated/secrets.h. The key is created automatically the first time and never committed."),
+    ]),
+    "build": ("Build options", [
+        _i("bool", "debug", "DEBUG: -Og -g3 instead of -Os", "For stepping with a debugger. The satellite does not fit 56 KB with it."),
+        _i("bool", "log", "LOG: satellite console log", "Off removes the log (about 15 KB) but is broken: downlink frames get corrupted (open bug)."),
+        _i("bool", "timer_rtc", "RTC-backed UTIL_TIMER tick", "Dormant ST timer layer (about 1.5 KB). Leave off."),
+        _i("choice", "frontend", "Satellite RF front end", "NUCLEO = stock Nucleo-WL55JC (RFO_HP PA). CUSTOM = the reference board (RFO_LP + external 3.3 V / 5 V PAs).",
+           options=FRONTENDS),
+    ]),
+    "identity": ("Identity", [
+        _i("str", "project", "Project name (CW prefix)", "1-6 characters A-Z / 0-9. The CW beacon sends <project> <satellite call sign>.", upper=True),
+        _i("str", "sat_call", "Satellite call sign", "1-6 characters A-Z / 0-9.", upper=True),
+        _i("int", "sat_ssid", "Satellite SSID", "0-15.", lo=0, hi=15),
+        _i("str", "gs_call", "Ground station call sign", "1-6 characters A-Z / 0-9.", upper=True),
+        _i("int", "gs_ssid", "Ground station SSID", "0-15.", lo=0, hi=15),
+    ]),
+    "radio": ("Radio and timing", [
+        _i("int", "downlink_hz", "Downlink frequency, Hz (satellite -> ground)", "400000000-960000000. Default 435000000.", lo=400_000_000, hi=960_000_000),
+        _i("int", "uplink_hz", "Uplink frequency, Hz (ground -> satellite)", "400000000-960000000. Default 437375000.", lo=400_000_000, hi=960_000_000),
+        _i("int", "cw_unit_ms", "CW dit length, ms", "20-200. The ground station decodes with the same value (60 ms = 20 WPM).", lo=20, hi=200),
+        _i("int", "beacon_period_s", "CW beacon period, s", "30-600. The beacon starts this often, also during a transfer.", lo=30, hi=600),
+    ]),
+    "digi": ("Digipeater and store and forward", [
+        _i("bool", "digi", "DIGI: repeat other stations' AX.25 UI frames",
+           "Frames with a digipeater path and a good FCS are judged by the digipeater instead of the command logic. Costs about 5 KB of flash."),
+        _i("str", "digi_alias", "Alias besides our call sign", "ARISS or empty. 1-6 characters A-Z / 0-9.", upper=True, dep=["digi"]),
+        _i("bool", "digi_wide", "Answer WIDE2-N paths", "WIDE2 is the wide-area tier a satellite belongs to; WIDE1-1 is for ground fill-in digipeaters.", dep=["digi"]),
+        _i("bool", "digi_trace", "Trace: put our call sign into WIDE2-N paths", "New-N trace: NODE*,WIDE2-1.", dep=["digi"]),
+        _i("int", "digi_max_n", "Highest WIDE2-N accepted", "1-7. Flooding control: a satellite footprint is huge, so keep it at 2.", lo=1, hi=7, dep=["digi"]),
+        _i("int", "digi_dedupe_s", "Duplicate window, s", "0-600. Same source + destination + info is not repeated again inside this time (0 = off).", lo=0, hi=600, dep=["digi"]),
+        _i("int", "digi_rate_per_min", "Repeats per minute", "0-60 (0 = unlimited). Power and heat budget of the 5 V PA.", lo=0, hi=60, dep=["digi"]),
+        _i("int", "digi_burst", "Burst (token bucket size)", "1-8.", lo=1, hi=8, dep=["digi"]),
+        _i("int", "digi_src_min_s", "Minimum seconds between two repeats of one station", "0-300.", lo=0, hi=300, dep=["digi"]),
+        _i("bool", "saf", "SAF: keep repeated frames, send them again later",
+           "Store and forward. The messages are kept in RAM and journaled in CPU1's flash (they survive a reset). Hop budget = the WIDEn-N of the path.", dep=["digi"]),
+        _i("bool", "saf_immediate", "Also repeat right away", "Off: a message is only sent from the store.", dep=["digi", "saf"]),
+        _i("int", "saf_max_fwd", "Sends per stored message", "1-8.", lo=1, hi=8, dep=["digi", "saf"]),
+        _i("int", "saf_fwd_interval_s", "Seconds between two sends of one message", "10-86400. 900 s is about a quarter of an orbit.", lo=10, hi=86400, dep=["digi", "saf"]),
+        _i("int", "saf_ttl_min", "Lifetime of a stored message, min", "1-1440.", lo=1, hi=1440, dep=["digi", "saf"]),
+        _i("bool", "saf_append_stats", "TEST: append the store statistics to the repeated text",
+           "Adds ' | MEMORY OBJECTS: ... | STORED n msg, N B' to the text of every frame repeated right away. Alters other stations' text: tests only.", dep=["digi", "saf"]),
+    ]),
+    "probes": ("ST-Link probes", [
+        _i("probe", "sat_serial", "Satellite probe", "ST-Link that flashes the satellite board."),
+        _i("probe", "gs_serial", "Ground station probe", "ST-Link that flashes the ground station board."),
+        _i("action", "rescan", "<Rescan probes>", "Ask st-info for the connected ST-Links."),
+    ]),
+    "actions": ("Build, flash and tools", [
+        _i("action", "build", "<Build the selected targets>", "make in cpu2/satellite and cpu2/ground_station."),
+        _i("action", "flash", "<Flash CPU2 of the selected targets>", "Needs a probe for every selected target. CPU1 is preserved."),
+        _i("action", "flash_all", "<Flash CPU1 (NuttX) + boot option bytes + CPU2>", "Needs nuttx/nuttx.bin (make nuttx)."),
+        _i("action", "clean", "<Clean>", "Remove the build directories."),
+        _i("action", "memory", "<Show the memory report>", "Flash and RAM bars, section sizes, largest symbols."),
+        _i("action", "gen", "<Generate generated/ now>", "Rewrite s2s2_config.h, s2s2.mk and (if missing) secrets.h."),
+        _i("action", "defconfig", "<Reset all options to the defaults>", "Keeps the ST-Link choice."),
+    ]),
+}
+
+
+def item_visible(it, cfg):
+    return all(cfg.get(k) for k in it.get("dep", ()))
 
 
 # --------------------------------------------------------------------------
@@ -211,6 +306,7 @@ def render_config_h(cfg):
 /* store-and-forward (needs the digipeater): accepted frames are kept and sent again, journal in CPU1 flash */
 #define S2S2_SAF_ENABLE          %(saf_on)d
 #define S2S2_SAF_IMMEDIATE       %(saf_immediate_on)d         /* also repeat right away (0 = only send from the store) */
+#define S2S2_SAF_APPEND_STATS    %(saf_append_on)d         /* TEST: append the store statistics to the text of every digipeated message */
 #define S2S2_SAF_MAX_FORWARDS    %(saf_max_fwd)d         /* sends of one stored message */
 #define S2S2_SAF_INTERVAL_MS     %(saf_fwd_interval_s)d000UL  /* between two sends of the same message */
 #define S2S2_SAF_TTL_MS          (%(saf_ttl_min)d0000UL * 6UL)   /* lifetime: minutes * 60000 */
@@ -219,7 +315,7 @@ def render_config_h(cfg):
 """ % dict(cfg, project=c_str(cfg["project"]), sat_call=c_str(cfg["sat_call"]), gs_call=c_str(cfg["gs_call"]),
            cw_call=c_str("%s %s" % (cfg["project"], cfg["sat_call"])),
            digi_on=int(cfg["digi"]), digi_alias=c_str(cfg["digi_alias"]), digi_wide_on=int(cfg["digi_wide"]),
-           digi_trace_on=int(cfg["digi_trace"]), saf_on=int(cfg["saf"]), saf_immediate_on=int(cfg["saf_immediate"]))
+           digi_trace_on=int(cfg["digi_trace"]), saf_on=int(cfg["saf"]), saf_immediate_on=int(cfg["saf_immediate"]), saf_append_on=int(cfg["saf_append_stats"]))
 
 
 def render_mk(cfg):

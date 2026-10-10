@@ -44,7 +44,7 @@ struct obc_shared_s
   volatile uint32_t cw_test_req;    /* CPU1: bumped on every CWTEST command (start, stop or restart) */
   volatile uint32_t cw_test_run;    /* CPU2: 1 while the test is transmitting */
   volatile uint32_t cw_test_words;  /* CPU2: number of HELLO cycles (CW) or packets (GMSK) sent so far */
-  volatile uint32_t cw_test_mode;   /* CPU1: 0 = Morse CW "HELLO", 1 = "HELLO" in standard GMSK AX.25 packets, back to back */
+  volatile uint32_t cw_test_mode;   /* CPU1: 0 = Morse CW "HELLO", 1 = "HELLO" in standard GMSK AX.25 packets, back to back, 2 = Morse "HELLO" with a 1 s carrier in front */
 };
 
 #define OBC_SHARED  ((struct obc_shared_s *)IPC_OBC_BASE)

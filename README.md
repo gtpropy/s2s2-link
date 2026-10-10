@@ -7,14 +7,14 @@ one for the ground station.
 ## Quick start
 
 ```
-make                 # menuconfig-style TUI: configure everything, build, memory bars, flash
+make                 # menuconfig (NuttX style menu tree): configure everything, build, memory bars, flash
 make configure       # no UI: generate generated/{s2s2_config.h, s2s2.mk, secrets.h} from .s2s2.config
 make build           # build the selected targets        make flash   # flash CPU2 of the selected targets
 make testbench       # link / image / SDR + Direwolf test GUI (http://127.0.0.1:8765)
 make test            # host tests (framing, integrity check, digipeater, store and forward, Dire Wolf cross-check)
 ```
 
-The TUI (`tools/config`) is the single place for all settings: targets, AUTH, build options, call signs, SSIDs,
+The menuconfig (`tools/config`, a menu tree like NuttX's: Enter opens a submenu or edits a value, Space toggles `[*]`, `?` shows the help of an item, Esc goes back, `s` saves, `q` quits; every change is saved and generated at once) is the single place for all settings: targets, AUTH, build options, call signs, SSIDs,
 frequencies, CW / beacon timing and the ST-Link probes. It writes `.s2s2.config` and regenerates `generated/`
 (git-ignored); the Makefiles in `cpu2/` read it, so a plain `make` in a firmware directory uses the same settings.
 `generated/secrets.h` holds the random AUTH key shared by both images; it is created automatically the first time
