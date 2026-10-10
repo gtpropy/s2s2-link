@@ -131,6 +131,17 @@ th{color:var(--mute);font-weight:600;font-size:12px}
   </section>
 
   <section>
+    <h2>Camera fragments on repeat (for a terminal Direwolf screenshot) <span id="v-imageloop"></span></h2>
+    <div class="row">
+      <label style="margin:0">fragments per round (0 = all)</label><input id="loop-n" type="number" value="10" min="0" max="400" style="width:70px">
+      <label style="margin:0">seconds</label><input id="loop-secs" type="number" value="3600" min="10" max="43200" style="width:80px">
+      <button data-run="imageloop">Send the selected image's fragments over and over</button>
+    </div>
+    <p class="hint">The Nucleo sends the camera fragments (type 0x08) of the image selected above, round after round, until you press Stop. Run <span class="mono">rtl_fm -f 434.9935M -s 48000 -g 30 | direwolf -c tools/direwolf_s2s2_4800.conf -r 48000 -n 1 -B 4800 -g -t 0 -d p -</span> in a terminal (use the frequency where your dongle sees 435.000 MHz) and screenshot Direwolf's raw output. Fragment 1 starts with the JPEG header <span class="mono">ff d8 ff e0 … JFIF</span>.</p>
+    <div id="imageloop-out"></div>
+  </section>
+
+  <section>
     <h2>CW HELLO test (spectrum analyzer) <span id="v-cwtest"></span></h2>
     <div class="row">
       <label style="margin:0">seconds</label><input id="cw-secs" type="number" value="3600" min="5" max="43200">
@@ -158,7 +169,7 @@ th{color:var(--mute);font-weight:600;font-size:12px}
       <label style="margin:0">PINGs</label><input id="link-n" type="number" value="5" min="1" max="50">
       <button data-run="link">Run link test</button>
     </div>
-    <p class="hint">GS → satellite PING. Pass = ACK accepted + wrapped PING reply + ACK completed decoded on the GS, 3 frames each time.</p>
+    <p class="hint">GS → satellite PING. Pass = ACK accepted + HK reply + ACK completed decoded on the GS, 3 frames each time.</p>
     <div id="link-out"></div>
   </section>
 
@@ -279,7 +290,7 @@ async function refresh(fresh){
       $('#img-prog').textContent = `${s.progress.got.length} / ${s.progress.total}`;
       $('#img-bar').style.width = (100 * s.progress.got.length / s.progress.total) + '%';
     }
-    for (const k of ['link','image','sdr','rate','cwtest','sdrimage']) if (s.results[k] && !(k === 'image' && s.running === 'image')) showResult(k, s.results[k]);
+    for (const k of ['link','image','sdr','rate','cwtest','sdrimage','imageloop']) if (s.results[k] && !(k === 'image' && s.running === 'image')) showResult(k, s.results[k]);
     setRunning(s.running);
     // one-click setup: connect whatever is plugged in, once
     if (!autoDone){ autoDone = true;
@@ -310,7 +321,8 @@ function buildGrid(n){ stage.write.clear(); stage.read.clear(); stage.tx.clear()
 function showResult(k, r){
   badge('#v-' + k, r.verdict);
   const o = $('#' + k + '-out');
-  if (k === 'sdrimage'){
+  if (k === 'imageloop'){ o.innerHTML = r.sent !== undefined ? `<p class="hint">${r.sent} fragments sent in ${r.rounds} round(s)</p>` : esc(r.why||''); }
+  else if (k === 'sdrimage'){
     if (!r.frames && r.frames !== 0){ o.innerHTML = esc(r.why || ''); }
     else {
       const good = r.match;
@@ -392,6 +404,7 @@ $$('[data-run]').forEach(b => b.onclick = () => {
   const n = b.dataset.run;
   const cfg = {name: n, sat_probe: $('#satprobe').value, gs_probe: $('#gsprobe').value};
   if (n === 'link') cfg.count = +$('#link-n').value;
+  if (n === 'imageloop'){ cfg.fragments = +$('#loop-n').value; cfg.seconds = +$('#loop-secs').value; cfg.fresh = false; }
   if (n === 'sdrimage'){ cfg.freq_mhz = +$('#sdrimg-freq').value; cfg.gain = +$('#sdrimg-gain').value; cfg.fresh = false; }
   if (n === 'cwtest'){ cfg.seconds = +$('#cw-secs').value; cfg.fresh = false; cfg.mode = b.dataset.mode || 'cw'; }
   if (n === 'rate'){ cfg.count = +$('#rate-n').value; cfg.gaps = $('#rate-gaps').value; }

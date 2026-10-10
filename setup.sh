@@ -62,7 +62,7 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FW_DIR="$REPO_ROOT/Satellite_M0+/Com_sat"
+FW_DIR="$REPO_ROOT/cpu2/satellite"
 CHECK_ONLY=0
 [ "${1:-}" = "--check" ] && CHECK_ONLY=1
 

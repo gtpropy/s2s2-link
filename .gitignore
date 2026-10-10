@@ -1,20 +1,14 @@
 __pycache__/
 *.pyc
-tools/.session_secret
-tools/mission_control.db
-tools/.venv/
-.build_opts
+.idea/
+
+# configuration and generated files (generated/secrets.h holds the AUTH key: never commit it)
 .s2s2.config
-Satellite_M0+/Com_sat/**/*.o
-Satellite_M0+/Com_sat/**/*.d
-Satellite_M0+/Com_sat/*.elf
-Satellite_M0+/Com_sat/*.map
-Satellite_M0+/Com_sat/*.bin
-Ground_Station/**/*.o
-Ground_Station/**/*.d
-Ground_Station/*.elf
-Ground_Station/*.map
-Ground_Station/*.bin
-fec_asm_tests/*.o
-fec_asm_tests/*.elf
-fec_asm_tests/*.bin
+generated/
+
+# build outputs
+cpu2/*/build/
+cpu2/*/compile_flags.txt
+tools/.venv/
+tools/ground_software/.session_secret
+tools/ground_software/mission_control.db

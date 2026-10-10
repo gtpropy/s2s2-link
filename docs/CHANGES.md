@@ -1,5 +1,10 @@
 # S2S2 COM subsystem: what changed, what it costs, how it was verified
 
+> **Paths:** sections 1-15 use the layout before 2026-10-10 (`Satellite_M0+/Com_sat`, `Ground_Station`, `fec_asm_tests`, `host_tests`,
+> `test_reports`); section 16 maps old to new. The per-file diffs against the reference (`docs/diffs`) were dropped with the old layout
+> (the reference is `github.com/PrmBRana/dummy-camera-live` commit `0b807890`). The light FEC wrap of sections 7, 8 and 13-15 was removed
+> in section 16; AUTH stays.
+
 Baseline = `github.com/PrmBRana/dummy-camera-live` @ `0b807890` ("hk correct"), built unmodified with the same
 ARM GNU Toolchain 15.3 (`-Os`). Full source diffs against it are in `docs/diffs/`:
 
@@ -209,3 +214,85 @@ The 300 ms gap in image transfers is therefore not needed once the GS stops prin
 `obc_shared_s` rate fields, CPU1 `CMD_RATE`, GS `RATE` commands and `g_uart_quiet`, bench `test_rate`. Satellite image 52,108 B,
 GS 49,248 B, nuttx.bin 141,852 B. A rate test blocks the CPU2 loop (and so the 90 s beacon) for up to N x (0.37 s + gap).
 
+## 13. Packet format, FEC=T|F, SDR + Direwolf proof (2026-10-10)
+
+- **Packet Format sheets applied** (kept the FEC wrap and AUTH): callsigns satellite `9N2SJ-1` -> `GROUND` (GS: `GROUND` -> `9N2SJ`);
+  camera fragment is now the sheet's type `0x08` packet (image ID, fragment index, total, image type, AI score, 128 data bytes,
+  CRC-16/X.25; no length field, last fragment zero padded); CW beacon = `S2S2 9N2SJ` + the 8 bytes of CW BEACON 1 / 2 as hex digits
+  (grouped `XXXX XXXX XXXX XXXX`; fields the M4 does not deliver are sent as 0); 20 leading HDLC flags on every unwrapped packet.
+  Not done: Beacon 1/2 and HK telemetry AX.25 packets of the sheet (0xB1 / 0xB2), image type / AI score values.
+- **`FEC=T|F` build option** (satellite and GS Makefiles, `tools/s2s2_tui.py`): `FEC=T` (default) = light FEC wrap on short packets; `FEC=F`
+  = every packet is the plain AX.25 information field of the sheets (HELLO, ACK, beacons, commands unwrapped), the wrap sources are not
+  linked (satellite 52,492 -> 49,092 B, GS 46,448 -> 43,144 B), AUTH is forced off (its tag lives inside the wrapped block), 20 leading
+  flags. Both ends must be built the same way (`make FEC=F flash-sat` / `flash-gs`). Verified on air with FEC=F: Direwolf decodes
+  `9N2SJ-1>GROUND:HELLO` as a 21-byte frame (`docs/proof/direwolf_hello_fecoff_terminal.txt`).
+- **Proof without the GS**: bench test "Image via SDR + Direwolf": the Nucleo sent the 23,406 B APN logo, RTL-SDR + stock Direwolf decoded
+  183/183 fragments (valid type 0x08, CRC-16/X.25), `9N2SJ-1 -> GROUND-0`, ctl 0x03, PID 0xF0, rebuilt picture byte-identical
+  (`test_reports/20261010_133730`). Raw terminal captures: `docs/proof/direwolf_*_raw_terminal.txt`.
+- **Bench fixes**: a status refresh ran `st-info --probe` (resets the board) and `rtl_test -t`; both are replaced by reads of the USB
+  registry. This was the reset loop (CPU1 and CPU2 clocks restarting every ~4.5 s) behind many of the earlier USB drop-outs and "CPU2 hung"
+  symptoms. New bench tests: raw rate, CW HELLO / GMSK HELLO, camera fragments on repeat, SDR image proof with live Direwolf frame log;
+  the Nucleo's VCP is opened with DTR/RTS low and reconnects at most every 3 s; `rtl_fm` is stopped with SIGINT first.
+
+
+## 14. ACK / NACK and command opcodes per the Packet Format sheets (2026-10-10)
+
+- **ACK / NACK (Sheet 2)**, 3-byte information field `[type][status/error][mission id]`: ACK accepted `AC 00 <mission>`, ACK completed
+  `AC 01 <mission>` (was `EE 01`; `0xEE` is now only the NACK/error type, as in the sheet's legend), NACK/error `EE <err> <mission>` with
+  the sheet's codes (0x02 packet, 0x03 CRC, 0x04 incomplete, 0x05 data missing, 0x06 data unavailable, 0x07 busy, 0x08 mission inactive,
+  0x09 invalid command, 0x0A memory/file, 0x0B transmission failed); the old NACK byte `0xFF` is gone (satellite and GS).
+  Note: Sheet 2's example row "ACK command completed" literally shows `EE 00 05`, which contradicts its own legend (ACK = 0xAC, status
+  0x01 = completed); the legend was followed.
+  Sent now: invalid/unknown opcode `EE 09 FF`; 0x53 frame that is not 13 bytes `EE 04 FF`; downlink commands whose data is not there
+  (empty flash ring after the M4 timeout) `EE 05 <mission>` instead of silently sending nothing. Not generated: 0x02/0x03 (a frame with a
+  bad FCS is dropped before it is known to be ours), 0x07 (RX is off while the satellite answers), 0x06, 0x08, 0x0A, 0x0B.
+- **Command opcodes (Sheet 3)** - the satellite now serves exactly these 13-byte commands (SAT-ID 53, MCU ID, opcode B1-B3, DATA_ID 2,
+  ADDRESS 4, NO OF PACKETS 2): `53 04 CC 5E BD` run camera mission, `53 01 1D D2 F5` camera download, `53 01 1D D1 F2` HEALTH SAT
+  (sat_health), `53 01 1D D1 F8` housekeeping download, `53 01 DE EF AA` antenna deployment (ACK, forwarded to the M4, ACK).
+  Removed (not in the sheet): the loose data-id / MCU-id matches, PING (`1D D1 F5`), dummy camera (`CC 5E BE`), ADCS / EPDM, the 8-byte
+  command form and the 1-byte burst request; all of them now get NACK `EE 09 FF`. GS: `PING` now sends HEALTH SAT (ACK, HK packet,
+  ACK), `FLASH`/`D` uses `1D D1 F8`, `HK2` is the housekeeping download, `DUMMY` is the sheet's run-camera command, new `ANT`.
+- **CW (Sheet 4)**: already the sheet's format (`S2S2 9N2SJ` + 8 bytes of CW BEACON 1 / 2, system status 11 normal, mission status, time
+  after reset, solar cell bits); nothing changed. The BIRDS-4 timing slide (35 s beacon, 80 s off) is for three satellites sharing a
+  frequency; ours keeps one beacon every 90 s.
+- Not done: the 2-byte header of the sheet's Data/Telemetry packet around the 128-byte HK data, the AX.25 Beacon 1/2 packets (excluded by
+  request). The old GS firmware on the board is not reflashed (GS ST-Link not connected).
+
+## 15. AUTH independent of FEC (2026-10-10)
+
+- `FEC` and `AUTH` are now separate build options (satellite + GS Makefiles, TUI). All four combinations build:
+  FEC=T AUTH=T = 152-byte block with counter + tag (as before); FEC=T AUTH=F = block with repair bytes only;
+  **FEC=F AUTH=T = plain info field + 12-byte trailer `[counter(4, big endian)][tag(8)]`** (tag over payload + counter, same keyed digest
+  and replay counter as the block form; the sheet layout stays in front of the trailer; packets > 107 B stay unauthenticated as before);
+  FEC=F AUTH=F = nothing wrapped. Both ends must use the same FEC and AUTH settings.
+- `seal_core.S` now assembles the FEC routines only with `SEAL_WRAP_ENABLE=1`; with FEC=F the tag function alone is linked (no tables).
+  Satellite image text: FEC=T/AUTH=T 48,848 B, T/F 48,116, F/T 46,684, F/F 45,404.
+- Receive: `SEAL_LEN_MAY_BE_WRAPPED(n)` (seal_wrap.h) decides whether to try `Protocol_DecodePayload`; with AUTH on the satellite still drops every
+  command that is not authentic.
+- Tests: `host_tests/rt_auth.c` (create -> extract -> verify -> unwrap; flipping any single bit of the info field is rejected; replay and a
+  plain short packet are rejected; sheet prefix intact) and `rt_wrap.c` pass; on chip (Nucleo 002D, FEC=F AUTH=T) `g_sealSelfTest` = `0xA5A50001`
+  (official tag vector, round trip, tamper and replay rejection). Not tested on air: the GS ST-Link is not connected.
+
+## 16. FEC removed, generated config + secrets, new layout (2026-10-10)
+
+- **FEC removed completely** (assembly encoder/decoder, tables, `FEC=` option, emulator tests, 152-byte block). AUTH stays and no longer depends
+  on anything: payloads <= 107 bytes get a 12-byte trailer `[counter(4)][tag(8)]` behind the plain information field; every packet uses 20
+  leading flags. Reason: the wrap could not cover the camera fragments (138 + 32 repair bytes does not fit the 200-byte radio packet),
+  protected against the less likely failure (bit errors in a packet that was caught, not a missed sync) and had no measured benefit.
+  `SEAL_TEST` is gone too (the boot self-test is always the full one). Satellite image text with AUTH: 46,700 B (was 48,848 B with FEC+AUTH).
+- **The TUI is the configuration** (`make`, like NuttX menuconfig): `.s2s2.config` holds targets, AUTH, DEBUG, LOG, FRONTEND, RTC timer,
+  project name, call signs + SSIDs, downlink / uplink Hz, CW dit ms, beacon period and the ST-Links. `make configure` (or any change in the TUI)
+  generates `generated/s2s2_config.h` (the `S2S2_*` macros used by both images instead of the values that were hard-coded in six places),
+  `generated/s2s2.mk` (build options) and `generated/secrets.h`. The per-image Makefiles regenerate on every run, so a plain `make` there works.
+- **`generated/secrets.h`**: random 16-byte AUTH key, created automatically when missing, replaced by `make newkey` / the TUI button (asks twice).
+  Git-ignored. Replaces the key that was hard-coded in `seal_wrap.c`. The boot messages of both images print `key <fingerprint>`.
+- **New layout** (see README.md): `Satellite_M0+/Com_sat` -> `cpu2/satellite`, `Ground_Station` -> `cpu2/ground_station`, files identical in both
+  images (261 of them after dropping dead sources: 81 unused HAL / SX126x / test `.c` files) -> `cpu2/common/{protocol,system,drivers,ipc,vendor}`;
+  per image `app/ mission/ board/ system/ radio/ uart/ ipc/ boot/`. One shared `cpu2/common/cpu2.mk` replaces two near-identical 19 KB Makefiles;
+  objects and outputs go to `cpu2/<image>/build/` (the GS output is now `ground_station.bin`). `fec_asm_tests` -> `tests/tag_asm`, `host_tests` ->
+  `tests/host`, `test_reports` -> `docs/reports`, `tools/` split into `config/ testbench/ ground_software/ flash/`, `SLIDES_BRIEF.md`, the
+  Packet Format sheet and the RF reports -> `docs/`. Removed (archived outside the repo): `V1.4`, `old_code_reference`, `old_reference`, `shareRAM`,
+  stray images / logs / spreadsheets in `Ground_Station`.
+- Verified: both images build for AUTH=TRUE and FALSE (satellite 46,700 / 45,392 B, GS 44,388 / 43,644 B); host tests (`make test`) and the
+  tag-function emulator test pass; the satellite was flashed from the new tree and its boot self-test word reads `0xA5A50001`.
+  Not re-tested on air: the GS ST-Link is not connected, so the GS image was not flashed.

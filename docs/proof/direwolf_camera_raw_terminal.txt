@@ -1,0 +1,69 @@
+# Real Direwolf output, nothing of ours in the receive path.
+# Captured 2026-10-10 13:42: satellite Nucleo sends camera fragments of the APN logo (JPEG, 23,406 B = 183 fragments)
+# -> 4800 bit/s GMSK -> RTL-SDR -> Direwolf. 31 packets decoded in 24 s (fragments 7,8,9,0,1,...,9: the satellite repeats the first 10).
+# Command:
+#   rtl_fm -f 434.9935M -s 48000 -g 30 | direwolf -c tools/direwolf_s2s2_4800.conf -r 48000 -n 1 -B 4800 -g -t 0 -d p -
+#   (-d p = hex dump of every decoded packet; 434.9935 MHz is where THIS dongle sees the 435.000 MHz carrier)
+# Reading fragment 0 below (information field starts at offset 0x10, after the 16-byte AX.25 header):
+#   08            camera fragment (Packet Format sheet "Camera Fragment")
+#   00            image ID
+#   00 00         fragment index 0
+#   b7 00         total fragments = 0x00b7 = 183
+#   00 00         image type (RGB), AI score
+#   ff d8 ff e0 00 10 4a 46 49 46 ...   the start of the JPEG: SOI, APP0 "JFIF"
+#   ... last 2 bytes of the packet: CRC-16/X.25 of everything before it (low byte first)
+# addresses: 8e a4 9e aa 9c 88 60 = GROUND, 72 9c 64 a6 94 40 63 = 9N2SJ-1, control 03, PID f0. Total 154 B = 16 header + 138.
+
+9N2SJ-1 audio level = 61(+19/-21)    ___||||__
+9N2SJ-1 audio level = 61(+19/-21)    ___||||__.[0.4] 9N2SJ-1>GROUND:<0x08><0x00><0x00><0x00>.<0x00><0x00><0x00><0xff>.<0xff>.<0x00><0x10>JFIF<0x00><0x ...
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 00 00 b7 00 00 00 ff d8 ff e0 00 10 4a 46  ..............JF
+  020:  49 46 00 01 01 00 00 01 00 01 00 00 ff db 00 43  IF.............C
+  030:  00 03 02 02 03 02 02 03 03 03 03 04 03 03 04 05  ................
+  040:  08 05 05 04 04 05 0a 07 07 06 08 0c 0a 0c 0c 0b  ................
+  050:  0a 0b 0b 0d 0e 12 10 0d 0e 11 0e 0b 0b 10 16 10  ................
+  060:  11 13 14 15 15 15 0c 0f 17 18 16 14 18 12 14 15  ................
+  070:  14 ff db 00 43 01 03 04 04 05 04 05 09 05 05 09  ....C...........
+  080:  14 0d 0b 0d 14 14 14 14 14 14 14 14 14 14 14 14  ................
+  090:  14 14 14 14 14 14 14 14 4e 4d                    ........NM
+------
+
+9N2SJ-1 audio level = 62(+21/-18)    _||||____
+9N2SJ-1 audio level = 62(+21/-18)    _||||____.[0.2] 9N2SJ-1>GROUND:<0x08><0x00><0x01><0x00>.<0x00><0x00><0x00><0x14><0x14><0x14><0x14><0x14><0x14><0x ...
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 01 00 b7 00 00 00 14 14 14 14 14 14 14 14  ................
+  020:  14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14  ................
+  030:  14 14 14 14 14 14 ff c0 00 11 08 01 a7 01 b9 03  ................
+  040:  01 22 00 02 11 01 03 11 01 ff c4 00 1e 00 01 00  ."..............
+  050:  02 01 05 01 01 00 00 00 00 00 00 00 00 00 00 08  ................
+  060:  09 07 01 02 05 06 0a 04 03 ff c4 00 4a 10 00 01  ............J...
+  070:  03 03 03 03 01 05 05 04 07 06 05 02 07 00 01 00  ................
+  080:  02 03 04 05 11 06 07 08 12 21 31 41 09 13 22 51  .........!1A.."Q
+  090:  61 14 32 42 71 81 23 38 03 ba                    a.2Bq.#8..
+------
+
+9N2SJ-1 audio level = 61(+20/-18)    ___||||__
+9N2SJ-1 audio level = 61(+20/-18)    ___||||__.[0.4] 9N2SJ-1>GROUND:<0x08><0x00><0x05><0x00>.<0x00><0x00><0x00>..}.<0x16>.<0x1b>.7@..`n0..<0x09>F@=D.w ...
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 05 00 b7 00 00 00 ea b5 7d a8 16 b6 1b d5  ..........}.....
+  020:  37 40 ad a7 60 6e 30 f6 e0 09 46 40 3d 44 87 77  7@..`n0...F@=D.w
+  030:  39 25 5a b6 d3 6f 3e 8c df 1d 2d 16 a1 d1 57 da  9%Z..o>...-...W.
+  040:  6b e5 b1 ee 2c 2e 84 90 f8 dc 0e 0b 5e c3 87 34  k...,.......^..4
+  050:  fe 61 01 dd 91 11 00 44 44 01 11 10 04 44 40 11  .a.....DD....D@.
+  060:  11 00 44 44 01 11 10 04 44 40 11 11 00 44 44 01  ..DD....D@...DD.
+  070:  11 10 04 44 40 11 11 00 44 44 01 11 10 04 44 40  ...D@...DD....D@
+  080:  11 11 00 44 44 01 11 10 04 44 40 11 11 00 5f 1d  ...DD....D@..._.
+  090:  de f1 43 60 b6 d4 5c 2e 68 3d                    ..C`..\.h=
+------

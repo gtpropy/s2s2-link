@@ -1,0 +1,47 @@
+{
+  "generated": "2026-10-10T13:37:30",
+  "git": "e458cde",
+  "note": "image sent over the air, decoded by RTL-SDR + Direwolf only (no GS), spec camera fragment format, callsigns 9N2SJ-1 > GROUND",
+  "sat_bin": {
+    "bin": 52500,
+    "mtime": 1791559459.4073255,
+    "limit": 57344
+  },
+  "gs_bin": {
+    "bin": 46456,
+    "mtime": 1791559504.2395518,
+    "limit": 57344
+  },
+  "results": {
+    "link": null,
+    "image": null,
+    "sdr": null,
+    "rate": null,
+    "cwtest": null,
+    "sdrimage": {
+      "test": "sdrimage",
+      "when": 1791618739.4457421,
+      "name": "antarikshya_logo.png",
+      "bytes": 23406,
+      "fragments": 183,
+      "frames": 183,
+      "valid": 183,
+      "other": 0,
+      "missing": [],
+      "addresses": [
+        "9N2SJ-1 -> GROUND-0"
+      ],
+      "control": "0x03",
+      "pid": "0xF0",
+      "info_lengths": [
+        138
+      ],
+      "src_sha256": "7e992663a2ac35b8b40e26f014ad899d9d296f21baebe9a676f95f14b4572dff",
+      "rx_sha256": "7e992663a2ac35b8b40e26f014ad899d9d296f21baebe9a676f95f14b4572dff",
+      "match": true,
+      "elapsed_s": 296.5,
+      "freq_mhz": 434.9935,
+      "verdict": "PASS"
+    }
+  }
+}

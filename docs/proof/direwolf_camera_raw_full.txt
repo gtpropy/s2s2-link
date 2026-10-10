@@ -1,0 +1,736 @@
+Dire Wolf Release 1.8.1, November 2025
+Includes optional support for:  gpsd hamlib cm108-ptt dns-sd
+
+Reading config file /Users/dhakalrabi/nuttxspace/s2s2-link/tools/direwolf_s2s2_4800.conf
+Could not open any of these file locations:
+    tocalls.yaml
+    data/tocalls.yaml
+    ../data/tocalls.yaml
+    /usr/local/share/direwolf/tocalls.yaml
+    /usr/share/direwolf/tocalls.yaml
+    /opt/local/share/direwolf/tocalls.yaml
+It won't be possible to extract device identifiers from packets.
+Audio input device for receive: stdin  (channel 0)
+Audio out device for transmit: null  (channel 0)
+Audio input buffer has unexpected extreme size of 0 bytes.
+Detected at src/audio_portaudio.c, line 738.
+This might be caused by unusual audio device configuration values.
+Using 2048 to attempt recovery.
+Audio output buffer has unexpected extreme size of 0 bytes.
+Detected at src/audio_portaudio.c, line 747.
+This might be caused by unusual audio device configuration values.
+Using 2048 to attempt recovery.
+Channel 0: 4800 baud, K9NG/G3RUH, +, 48000 sample rate x 2, Tx AX.25.
+The ratio of audio samples per sec (48000) to data rate in baud (4800) is 10.0
+This is a suitable ratio for good performance.
+
+Note: PTT not configured for channel 0. (OK if using VOX.)
+When using VOX, ensure that it adds very little delay (e.g. 10-20) milliseconds
+between the time that transmit audio ends and PTT is deactivated.
+For example, if using a SignaLink USB, turn the DLY control all the
+way counter clockwise.
+
+Using VOX built in to the radio is a VERY BAD idea.  This is intended
+for voice operation, with gaps in the sound, and typically has a delay of about a
+half second between the time the audio stops and the transmitter is turned off.
+When using APRS your transmiter will be sending a quiet carrier for
+about a half second after your packet ends.  This may interfere with the
+the next station to transmit.  This is being inconsiderate.
+
+If you are trying to use VOX with connected mode packet, expect
+frustration and disappointment.  Connected mode involves rapid responses
+which you will probably miss because your transmitter is still on when
+the response is being transmitted.
+
+Read the User Guide 'Transmit Timing' section for more details.
+
+Ready to accept AGW client application 0 on port 8000 ...
+Ready to accept KISS TCP client application 0 on port 8001 ...
+DNS-SD: Announcing KISS TCP on port 8001 as 'Dire Wolf on Ryans-dev-pc'
+
+9N2SJ-1 audio level = 61(+21/-18)    |||______
+[0.1] 9N2SJ-1>GROUND:<0x08><0x00><0x07><0x00>·<0x00><0x00><0x00>9<0x03>¶{…TÛ§¼<0x1a>¿z5EE<0xff><0x00>Xßk/—<0x19>\â×TÊ\Èš\]Ñ<0x1b>|1 “€<0x17>L'(€ºßeg/<0xff><0x00>µí<0x03>ıšjZ¶¿Véªp(ŸĞGÚè<0x18><0x1a>Ö’ï<0x05>ì8<0x07>ÆF<0x0f>ÍOµæ<0x1f>h÷F÷³;‡cÖ<0x1a>z¡ğ\íU,¯-l­<0x07>âøòÇ<0x0c>´PW¢n5ïí—!9
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 07 00 b7 00 00 00 39 03 b6 7b 85 54 db a7  ........9..{.T..
+  020:  bc 1a bf 7a 35 45 45 ff 00 58 df 6b 2f 97 19 5c  ...z5EE..X.k/..\
+  030:  e2 d7 54 ca 5c c8 9a 5c 5d d1 1b 7c 31 a0 93 80  ..T.\..\]..|1...
+  040:  17 4c 27 28 80 ba df 65 67 2f ff 00 b5 ed 03 fd  .L'(...eg/......
+  050:  9a 6a 5a b6 bf 56 e9 aa 70 28 9f d0 47 da e8 18  .jZ..V..p(..G...
+  060:  1a d6 92 ef 05 ec 38 07 c6 46 0f cd 4f b5 e6 1f  ......8..F..O...
+  070:  68 f7 46 f7 b3 3b 87 63 d6 1a 7a a1 f0 5c ed 55  h.F..;.c..z..\.U
+  080:  2c 9d 81 af 2d 6c ad 07 e2 8d f8 f2 c7 0c b4 8f  ,...-l..........
+  090:  50 57 a2 6e 35 ef ed 97 21 39                    PW.n5...!9
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+20/-23)    _____|||_
+[0.6] 9N2SJ-1>GROUND:<0x08><0x00><0x08><0x00>·<0x00><0x00><0x00>’{IfÖÖf¶˜Õ°²®€ÊÙ<0x1f>I;N<0x1d><0x1b>°{|ÆppGd<0x06>RDD<0x01>u-×Ü‹NĞíÎ Ö7¹›<0x0d>¶ÏHú™<0x09> <0x17>><0x16><0x0c>‘İÎÀ<0x03>æWmUcí’äƒcŠÇ³öz î¢Û¥ğE/p<0x07>÷<0x10>;<0x0e>õîò<0x08>ôa<0x08><0x0a>ÌÜíy]¹ûƒ¨µeÄ5µ·šé«¤c3ÒÂ÷ÕÂ
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 08 00 b7 00 00 00 92 7b 49 66 d6 d6 66 b6  .........{If..f.
+  020:  98 d5 b0 b2 ae 80 ca d9 1f 49 3b 4e 1d 1b b0 7b  .........I;N...{
+  030:  7c c6 70 70 47 64 06 52 44 44 01 75 2d d7 dc 8b  |.ppGd.RDD.u-...
+  040:  4e d0 ed ce a0 d6 37 b9 9b 0d b6 cf 48 fa 99 09  N.....7.....H...
+  050:  20 17 90 3e 16 0c 91 dd ce c0 03 e6 57 6d 55 63   ..>........WmUc
+  060:  ed 92 e4 83 63 8a c7 b3 f6 7a a0 ee a2 db a5 f0  ....c....z......
+  070:  45 2f 70 07 f7 10 3b 0e f5 ee f2 08 f4 61 08 0a  E/p...;......a..
+  080:  cc dc ed 79 5d b9 fb 83 a8 b5 65 c4 35 b5 b7 9a  ...y].....e.5...
+  090:  e9 ab a4 63 33 d2 c2 f7 d5 c2                    ...c3.....
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+20/-18)    _||||____
+[0.2] 9N2SJ-1>GROUND:<0x08><0x00><0x09><0x00>·<0x00><0x00><0x00>—t Î?EÖ–Óİn@h{.çµ›Ç¬6_RC}Ñ×êË%Â74¹Ôò–²P<0x1c><0x1d>Òöç<0x0e>i d<0x1e>ÅtÔ#(<0x0b>Œâ×µãOkÚº<0x1d>=ºÔ<0x10>é[¼ò6<0x16>^éIû<0x03>Üsƒ '1z<0x0c>ä<0xfe>Xu¢ñC<0x7f>·SÜ-µ\(j<0x18>$Š¦šA$r4Œ‚<0x1c>;<0x11>…å”<0x0c>,ùi´
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 09 00 b7 00 00 00 97 74 8f a0 ce 3f 45 d6  .........t...?E.
+  020:  96 d3 dd 6e 40 68 7b 2e e7 b5 9b c7 ac 36 5f 52  ...n@h{......6_R
+  030:  43 7d d1 d7 ea cb 25 c2 37 34 b9 d4 f2 96 b2 50  C}....%.74.....P
+  040:  1c 1d d2 f6 e7 0e 69 20 64 1e c5 74 d4 23 28 0b  ......i d..t.#(.
+  050:  8c e2 d7 b5 e3 4f 6b da ba 1d 3d ba d4 10 e9 5b  .....Ok...=....[
+  060:  bc f2 36 16 5e e9 49 fb 03 dc 73 83 20 27 31 7a  ..6.^.I...s. '1z
+  070:  0c e4 8e fe 81 58 75 a2 f1 43 7f b7 53 dc 2d b5  .....Xu..C..S.-.
+  080:  90 5c 28 6a 18 24 8a a6 9a 41 24 72 34 8c 82 1c  .\(j.$...A$r4...
+  090:  3b 11 85 e5 94 0c 2c f9 69 b4                    ;.....,.i.
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+19/-21)    ___||||__
+[0.4] 9N2SJ-1>GROUND:<0x08><0x00><0x00><0x00>·<0x00><0x00><0x00><0xff>Ø<0xff>à<0x00><0x10>JFIF<0x00><0x01><0x01><0x00><0x00><0x01><0x00><0x01><0x00><0x00><0xff>Û<0x00>C<0x00><0x03><0x02><0x02><0x03><0x02><0x02><0x03><0x03><0x03><0x03><0x04><0x03><0x03><0x04><0x05><0x08><0x05><0x05><0x04><0x04><0x05><0x0a><0x07><0x07><0x06><0x08><0x0c><0x0a><0x0c><0x0c><0x0b><0x0a><0x0b><0x0b><0x0d><0x0e><0x12><0x10><0x0d><0x0e><0x11><0x0e><0x0b><0x0b><0x10><0x16><0x10><0x11><0x13><0x14><0x15><0x15><0x15><0x0c><0x0f><0x17><0x18><0x16><0x14><0x18><0x12><0x14><0x15><0x14><0xff>Û<0x00>C<0x01><0x03><0x04><0x04><0x05><0x04><0x05><0x09><0x05><0x05><0x09><0x14><0x0d><0x0b><0x0d><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14>NM
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 00 00 b7 00 00 00 ff d8 ff e0 00 10 4a 46  ..............JF
+  020:  49 46 00 01 01 00 00 01 00 01 00 00 ff db 00 43  IF.............C
+  030:  00 03 02 02 03 02 02 03 03 03 03 04 03 03 04 05  ................
+  040:  08 05 05 04 04 05 0a 07 07 06 08 0c 0a 0c 0c 0b  ................
+  050:  0a 0b 0b 0d 0e 12 10 0d 0e 11 0e 0b 0b 10 16 10  ................
+  060:  11 13 14 15 15 15 0c 0f 17 18 16 14 18 12 14 15  ................
+  070:  14 ff db 00 43 01 03 04 04 05 04 05 09 05 05 09  ....C...........
+  080:  14 0d 0b 0d 14 14 14 14 14 14 14 14 14 14 14 14  ................
+  090:  14 14 14 14 14 14 14 14 4e 4d                    ........NM
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 62(+21/-18)    _||||____
+[0.2] 9N2SJ-1>GROUND:<0x08><0x00><0x01><0x00>·<0x00><0x00><0x00><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0xff>À<0x00><0x11><0x08><0x01>§<0x01>¹<0x03><0x01>"<0x00><0x02><0x11><0x01><0x03><0x11><0x01><0xff>Ä<0x00><0x1e><0x00><0x01><0x00><0x02><0x01><0x05><0x01><0x01><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x08><0x09><0x07><0x01><0x02><0x05><0x06><0x0a><0x04><0x03><0xff>Ä<0x00>J<0x10><0x00><0x01><0x03><0x03><0x03><0x03><0x01><0x05><0x05><0x04><0x07><0x06><0x05><0x02><0x07><0x00><0x01><0x00><0x02><0x03><0x04><0x05><0x11><0x06><0x07><0x08><0x12>!1A<0x09><0x13>"Qa<0x14>2Bq#8<0x03>º
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 01 00 b7 00 00 00 14 14 14 14 14 14 14 14  ................
+  020:  14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14  ................
+  030:  14 14 14 14 14 14 ff c0 00 11 08 01 a7 01 b9 03  ................
+  040:  01 22 00 02 11 01 03 11 01 ff c4 00 1e 00 01 00  ."..............
+  050:  02 01 05 01 01 00 00 00 00 00 00 00 00 00 00 08  ................
+  060:  09 07 01 02 05 06 0a 04 03 ff c4 00 4a 10 00 01  ............J...
+  070:  03 03 03 03 01 05 05 04 07 06 05 02 07 00 01 00  ................
+  080:  02 03 04 05 11 06 07 08 12 21 31 41 09 13 22 51  .........!1A.."Q
+  090:  61 14 32 42 71 81 23 38 03 ba                    a.2Bq.#8..
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+20/-18)    _|||||___
+[0.3] 9N2SJ-1>GROUND:<0x08><0x00><0x02><0x00>·<0x00><0x00><0x00>v´<0x15><0x16><0x17>3R‘¡$Cb‚±³<0x18>rtÁÑ<0x19>f&46SdÂá<0xff>Ä<0x00><0x1c><0x01><0x01><0x00><0x01><0x05><0x01><0x01><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x06><0x01><0x04><0x05><0x07><0x08><0x02><0x03><0xff>Ä<0x00><<0x11><0x00><0x02><0x01><0x02><0x04><0x02><0x06><0x08><0x05><0x03><0x04><0x03><0x01><0x00><0x00><0x00><0x00><0x01><0x02><0x03><0x04><0x05><0x11>!1<0x06>A<0x12>"Qaq<0x07><0x13><0x14><0x15>2¡±Ñ#B‘áğRrÁ$3ÂÒ<0x16>‚¢â<0xff>Ú<0x00><0x0c><0x03><0x01><0x00>d<0x15>
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 02 00 b7 00 00 00 76 b4 15 16 17 33 52 91  ........v....3R.
+  020:  a1 24 43 62 82 b1 b3 18 72 74 c1 d1 19 66 26 34  .$Cb....rt...f&4
+  030:  36 53 64 c2 e1 ff c4 00 1c 01 01 00 01 05 01 01  6Sd.............
+  040:  00 00 00 00 00 00 00 00 00 00 00 06 01 04 05 07  ................
+  050:  08 02 03 ff c4 00 3c 11 00 02 01 02 04 02 06 08  ......<.........
+  060:  05 03 04 03 01 00 00 00 00 01 02 03 04 05 11 21  ...............!
+  070:  31 06 41 12 22 51 61 71 81 07 13 14 15 32 a1 b1  1.A."Qaq.....2..
+  080:  d1 23 42 91 e1 f0 52 72 c1 24 33 c2 d2 16 82 a2  .#B...Rr.$3.....
+  090:  e2 ff da 00 0c 03 01 00 64 15                    ........d.
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+19/-20)    __||||___
+[0.3] 9N2SJ-1>GROUND:<0x08><0x00><0x03><0x00>·<0x00><0x00><0x00><0x02><0x11><0x03><0x11><0x00>?<0x00>µ4D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>D]Wp7KIí]²<0x0b>†¬¿QX©'¨–)+%<0x0d>ë‘îék@ò{úú<0x00>Iğ€íH¶Ç#e¯cƒØà<0x1c>×4ä<0x10>|<0x10>Vä<0x01><0x11><0x10><0x04>D@t<0x0d>øŞ;FÁíF¡×7¿ŠÕ<0x07>¼l<0x01>İ.Rq<0x1c><0x10>b
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 03 00 b7 00 00 00 02 11 03 11 00 3f 00 b5  .............?..
+  020:  34 44 40 11 11 00 44 44 01 11 10 04 44 40 11 11  4D@...DD....D@..
+  030:  00 44 44 01 11 10 04 44 40 11 11 00 44 5d 57 70  .DD....D@...D]Wp
+  040:  37 4b 49 ed 5d b2 0b 86 ac bf 51 58 a9 27 a8 8e  7KI.].....QX.'..
+  050:  96 29 2b 25 0d eb 91 ee e9 6b 40 f2 7b fa fa 00  .)+%.....k@.{...
+  060:  49 f0 80 ed 48 b6 c7 23 65 8d af 63 83 d8 e0 1c  I...H..#e..c....
+  070:  d7 34 e4 10 7c 10 56 e4 01 11 10 04 44 40 74 0d  .4..|.V.....D@t.
+  080:  f8 de 3b 46 c1 ed 46 a1 d7 37 bf 8a 8e d5 07 bc  ..;F..F..7......
+  090:  6c 01 dd 2e 9e 52 71 1c 10 62                    l....Rq..b
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+20/-21)    ______|||
+[0.7] 9N2SJ-1>GROUND:<0x08><0x00><0x04><0x00>·<0x00><0x00><0x00>M?78ôÎV?ãŸ86¯’ôĞÃ§om·ê<0x07>4uØ.„CV×`œ4g<0x12>vi?<0x01>=¼á@<0x7f>lw"<0xff><0x00>§µ}›i­5=TVl\.á‡³ê\ßÙF{~<0x16><0x12>{<0x1c>|<0x7f>E[Ö[İ~œºÒÜ­•“ĞWÒÈ%†¦šC<0x1c>‘¸w<0x05>®<0x1d>Áü<0x1e>¦<0x11>SŸ<0x14>ı®zAÁ<0x15>ƒv©æ[
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 04 00 b7 00 00 00 4d 3f 37 38 81 f4 ce 56  ........M?78...V
+  020:  3f e3 9f 38 36 af 92 f4 d0 c3 a7 6f 6d b7 ea 07  ?..86......om...
+  030:  34 75 d8 2e 84 43 56 d7 60 9c 34 67 12 76 69 3f  4u...CV.`.4g.vi?
+  040:  01 3d bc e1 40 7f 6c 77 22 ff 00 a7 b5 7d 9b 69  .=..@.lw"....}.i
+  050:  ad 35 3d 54 56 6c 5c 2e e1 87 b3 ea 5c df d9 46  .5=TVl\.....\..F
+  060:  7b 7e 16 12 7b 1c 7c 7f 45 5b d6 5b dd 7e 9c ba  {~..{.|.E[.[.~..
+  070:  d2 dc ad 95 93 d0 57 d2 c8 25 86 a6 9a 43 1c 91  ......W..%...C..
+  080:  b8 77 05 ae 1d c1 fc 90 1e a6 11 53 9f 14 fd ae  .w.........S....
+  090:  7a 8f 41 c1 15 83 76 a9 e6 5b                    z.A...v..[
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+20/-18)    ___||||__
+[0.4] 9N2SJ-1>GROUND:<0x08><0x00><0x05><0x00>·<0x00><0x00><0x00>êµ}¨<0x16>¶<0x1b>Õ7@­§`n0öà<0x09>F@=D‡w9%Z¶Óo>Œß<0x1d>-<0x16>¡ÑWÚkå±î,.„øÜ<0x0e><0x0b>^Ã‡4<0xfe>a<0x01>İ‘<0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>_<0x1d>ŞñC`¶Ô\.h=
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 05 00 b7 00 00 00 ea b5 7d a8 16 b6 1b d5  ..........}.....
+  020:  37 40 ad a7 60 6e 30 f6 e0 09 46 40 3d 44 87 77  7@..`n0...F@=D.w
+  030:  39 25 5a b6 d3 6f 3e 8c df 1d 2d 16 a1 d1 57 da  9%Z..o>...-...W.
+  040:  6b e5 b1 ee 2c 2e 84 90 f8 dc 0e 0b 5e c3 87 34  k...,.......^..4
+  050:  fe 61 01 dd 91 11 00 44 44 01 11 10 04 44 40 11  .a.....DD....D@.
+  060:  11 00 44 44 01 11 10 04 44 40 11 11 00 44 44 01  ..DD....D@...DD.
+  070:  11 10 04 44 40 11 11 00 44 44 01 11 10 04 44 40  ...D@...DD....D@
+  080:  11 11 00 44 44 01 11 10 04 44 40 11 11 00 5f 1d  ...DD....D@..._.
+  090:  de f1 43 60 b6 d4 5c 2e 68 3d                    ..C`..\.h=
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+19/-18)    __||||___
+[0.3] 9N2SJ-1>GROUND:<0x08><0x00><0x06><0x00>·<0x00><0x00><0x00>UPPÓ°É5ML‚8ãh<0x19>.s`<0x00><0x0a>2r[Ú-µ\vªÜnCUj¶5Á–{KÄíã¨bi>ë0æàî<0x1f>%O|“æÎær‚©±j››)l1Hd‚ÅniŠ–3Œd÷êyú¸Ÿ\a<0x01>aü¤ö¼éí<0x09>UY§ö†<0x0d>Wv…î‰÷º·<0x1f>°0ñ†œËåÃÃ©
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 06 00 b7 00 00 00 55 90 50 50 d3 b0 c9 35  ........U.PP...5
+  020:  4d 4c 82 38 e3 68 19 2e 73 8f 60 00 0a 32 72 5b  ML.8.h..s.`..2r[
+  030:  da 2d b5 5c 76 8e aa dc 6e 43 55 6a b6 35 c1 96  .-.\v...nCUj.5..
+  040:  7b 4b c4 9e ed e3 a8 62 69 3e eb 30 e6 e0 8e ee  {K.....bi>.0....
+  050:  1f 25 4f 7c 93 e6 ce e6 72 82 a9 b1 6a 9b 9b 29  .%O|....r...j..)
+  060:  6c 31 48 64 82 c5 6e 69 8a 96 33 8c 64 f7 ea 79  l1Hd..ni..3.d..y
+  070:  fa b8 9f 5c 61 01 61 fc a4 f6 bc e9 ed 09 55 59  ...\a.a.......UY
+  080:  a7 f6 9e 86 0d 57 76 85 ee 89 f7 ba b7 1f b0 30  .....Wv........0
+  090:  8e 9e f1 86 9c cb e5 c3 c3 a9                    ..........
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+18/-19)    ___|||||_
+[0.5] 9N2SJ-1>GROUND:<0x08><0x00><0x07><0x00>·<0x00><0x00><0x00>9<0x03>¶{…TÛ§¼<0x1a>¿z5EE<0xff><0x00>Xßk/—<0x19>\â×TÊ\Èš\]Ñ<0x1b>|1 “€<0x17>L'(€ºßeg/<0xff><0x00>µí<0x03>ıšjZ¶¿Véªp(ŸĞGÚè<0x18><0x1a>Ö’ï<0x05>ì8<0x07>ÆF<0x0f>ÍOµæ<0x1f>h÷F÷³;‡cÖ<0x1a>z¡ğ\íU,¯-l­<0x07>âøòÇ<0x0c>´PW¢n5ïí—!9
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 07 00 b7 00 00 00 39 03 b6 7b 85 54 db a7  ........9..{.T..
+  020:  bc 1a bf 7a 35 45 45 ff 00 58 df 6b 2f 97 19 5c  ...z5EE..X.k/..\
+  030:  e2 d7 54 ca 5c c8 9a 5c 5d d1 1b 7c 31 a0 93 80  ..T.\..\]..|1...
+  040:  17 4c 27 28 80 ba df 65 67 2f ff 00 b5 ed 03 fd  .L'(...eg/......
+  050:  9a 6a 5a b6 bf 56 e9 aa 70 28 9f d0 47 da e8 18  .jZ..V..p(..G...
+  060:  1a d6 92 ef 05 ec 38 07 c6 46 0f cd 4f b5 e6 1f  ......8..F..O...
+  070:  68 f7 46 f7 b3 3b 87 63 d6 1a 7a a1 f0 5c ed 55  h.F..;.c..z..\.U
+  080:  2c 9d 81 af 2d 6c ad 07 e2 8d f8 f2 c7 0c b4 8f  ,...-l..........
+  090:  50 57 a2 6e 35 ef ed 97 21 39                    PW.n5...!9
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+18/-19)    __||||___
+[0.3] 9N2SJ-1>GROUND:<0x08><0x00><0x08><0x00>·<0x00><0x00><0x00>’{IfÖÖf¶˜Õ°²®€ÊÙ<0x1f>I;N<0x1d><0x1b>°{|ÆppGd<0x06>RDD<0x01>u-×Ü‹NĞíÎ Ö7¹›<0x0d>¶ÏHú™<0x09> <0x17>><0x16><0x0c>‘İÎÀ<0x03>æWmUcí’äƒcŠÇ³öz î¢Û¥ğE/p<0x07>÷<0x10>;<0x0e>õîò<0x08>ôa<0x08><0x0a>ÌÜíy]¹ûƒ¨µeÄ5µ·šé«¤c3ÒÂ÷ÕÂ
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 08 00 b7 00 00 00 92 7b 49 66 d6 d6 66 b6  .........{If..f.
+  020:  98 d5 b0 b2 ae 80 ca d9 1f 49 3b 4e 1d 1b b0 7b  .........I;N...{
+  030:  7c c6 70 70 47 64 06 52 44 44 01 75 2d d7 dc 8b  |.ppGd.RDD.u-...
+  040:  4e d0 ed ce a0 d6 37 b9 9b 0d b6 cf 48 fa 99 09  N.....7.....H...
+  050:  20 17 90 3e 16 0c 91 dd ce c0 03 e6 57 6d 55 63   ..>........WmUc
+  060:  ed 92 e4 83 63 8a c7 b3 f6 7a a0 ee a2 db a5 f0  ....c....z......
+  070:  45 2f 70 07 f7 10 3b 0e f5 ee f2 08 f4 61 08 0a  E/p...;......a..
+  080:  cc dc ed 79 5d b9 fb 83 a8 b5 65 c4 35 b5 b7 9a  ...y].....e.5...
+  090:  e9 ab a4 63 33 d2 c2 f7 d5 c2                    ...c3.....
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+18/-20)    ____||||_
+[0.5] 9N2SJ-1>GROUND:<0x08><0x00><0x09><0x00>·<0x00><0x00><0x00>—t Î?EÖ–Óİn@h{.çµ›Ç¬6_RC}Ñ×êË%Â74¹Ôò–²P<0x1c><0x1d>Òöç<0x0e>i d<0x1e>ÅtÔ#(<0x0b>Œâ×µãOkÚº<0x1d>=ºÔ<0x10>é[¼ò6<0x16>^éIû<0x03>Üsƒ '1z<0x0c>ä<0xfe>Xu¢ñC<0x7f>·SÜ-µ\(j<0x18>$Š¦šA$r4Œ‚<0x1c>;<0x11>…å”<0x0c>,ùi´
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 09 00 b7 00 00 00 97 74 8f a0 ce 3f 45 d6  .........t...?E.
+  020:  96 d3 dd 6e 40 68 7b 2e e7 b5 9b c7 ac 36 5f 52  ...n@h{......6_R
+  030:  43 7d d1 d7 ea cb 25 c2 37 34 b9 d4 f2 96 b2 50  C}....%.74.....P
+  040:  1c 1d d2 f6 e7 0e 69 20 64 1e c5 74 d4 23 28 0b  ......i d..t.#(.
+  050:  8c e2 d7 b5 e3 4f 6b da ba 1d 3d ba d4 10 e9 5b  .....Ok...=....[
+  060:  bc f2 36 16 5e e9 49 fb 03 dc 73 83 20 27 31 7a  ..6.^.I...s. '1z
+  070:  0c e4 8e fe 81 58 75 a2 f1 43 7f b7 53 dc 2d b5  .....Xu..C..S.-.
+  080:  90 5c 28 6a 18 24 8a a6 9a 41 24 72 34 8c 82 1c  .\(j.$...A$r4...
+  090:  3b 11 85 e5 94 0c 2c f9 69 b4                    ;.....,.i.
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+19/-20)    ______|||
+[0.7] 9N2SJ-1>GROUND:<0x08><0x00><0x00><0x00>·<0x00><0x00><0x00><0xff>Ø<0xff>à<0x00><0x10>JFIF<0x00><0x01><0x01><0x00><0x00><0x01><0x00><0x01><0x00><0x00><0xff>Û<0x00>C<0x00><0x03><0x02><0x02><0x03><0x02><0x02><0x03><0x03><0x03><0x03><0x04><0x03><0x03><0x04><0x05><0x08><0x05><0x05><0x04><0x04><0x05><0x0a><0x07><0x07><0x06><0x08><0x0c><0x0a><0x0c><0x0c><0x0b><0x0a><0x0b><0x0b><0x0d><0x0e><0x12><0x10><0x0d><0x0e><0x11><0x0e><0x0b><0x0b><0x10><0x16><0x10><0x11><0x13><0x14><0x15><0x15><0x15><0x0c><0x0f><0x17><0x18><0x16><0x14><0x18><0x12><0x14><0x15><0x14><0xff>Û<0x00>C<0x01><0x03><0x04><0x04><0x05><0x04><0x05><0x09><0x05><0x05><0x09><0x14><0x0d><0x0b><0x0d><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14>NM
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 00 00 b7 00 00 00 ff d8 ff e0 00 10 4a 46  ..............JF
+  020:  49 46 00 01 01 00 00 01 00 01 00 00 ff db 00 43  IF.............C
+  030:  00 03 02 02 03 02 02 03 03 03 03 04 03 03 04 05  ................
+  040:  08 05 05 04 04 05 0a 07 07 06 08 0c 0a 0c 0c 0b  ................
+  050:  0a 0b 0b 0d 0e 12 10 0d 0e 11 0e 0b 0b 10 16 10  ................
+  060:  11 13 14 15 15 15 0c 0f 17 18 16 14 18 12 14 15  ................
+  070:  14 ff db 00 43 01 03 04 04 05 04 05 09 05 05 09  ....C...........
+  080:  14 0d 0b 0d 14 14 14 14 14 14 14 14 14 14 14 14  ................
+  090:  14 14 14 14 14 14 14 14 4e 4d                    ........NM
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+19/-21)    _____||||
+[0.6] 9N2SJ-1>GROUND:<0x08><0x00><0x01><0x00>·<0x00><0x00><0x00><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0xff>À<0x00><0x11><0x08><0x01>§<0x01>¹<0x03><0x01>"<0x00><0x02><0x11><0x01><0x03><0x11><0x01><0xff>Ä<0x00><0x1e><0x00><0x01><0x00><0x02><0x01><0x05><0x01><0x01><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x08><0x09><0x07><0x01><0x02><0x05><0x06><0x0a><0x04><0x03><0xff>Ä<0x00>J<0x10><0x00><0x01><0x03><0x03><0x03><0x03><0x01><0x05><0x05><0x04><0x07><0x06><0x05><0x02><0x07><0x00><0x01><0x00><0x02><0x03><0x04><0x05><0x11><0x06><0x07><0x08><0x12>!1A<0x09><0x13>"Qa<0x14>2Bq#8<0x03>º
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 01 00 b7 00 00 00 14 14 14 14 14 14 14 14  ................
+  020:  14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14  ................
+  030:  14 14 14 14 14 14 ff c0 00 11 08 01 a7 01 b9 03  ................
+  040:  01 22 00 02 11 01 03 11 01 ff c4 00 1e 00 01 00  ."..............
+  050:  02 01 05 01 01 00 00 00 00 00 00 00 00 00 00 08  ................
+  060:  09 07 01 02 05 06 0a 04 03 ff c4 00 4a 10 00 01  ............J...
+  070:  03 03 03 03 01 05 05 04 07 06 05 02 07 00 01 00  ................
+  080:  02 03 04 05 11 06 07 08 12 21 31 41 09 13 22 51  .........!1A.."Q
+  090:  61 14 32 42 71 81 23 38 03 ba                    a.2Bq.#8..
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+20/-20)    _||||____
+[0.2] 9N2SJ-1>GROUND:<0x08><0x00><0x02><0x00>·<0x00><0x00><0x00>v´<0x15><0x16><0x17>3R‘¡$Cb‚±³<0x18>rtÁÑ<0x19>f&46SdÂá<0xff>Ä<0x00><0x1c><0x01><0x01><0x00><0x01><0x05><0x01><0x01><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x06><0x01><0x04><0x05><0x07><0x08><0x02><0x03><0xff>Ä<0x00><<0x11><0x00><0x02><0x01><0x02><0x04><0x02><0x06><0x08><0x05><0x03><0x04><0x03><0x01><0x00><0x00><0x00><0x00><0x01><0x02><0x03><0x04><0x05><0x11>!1<0x06>A<0x12>"Qaq<0x07><0x13><0x14><0x15>2¡±Ñ#B‘áğRrÁ$3ÂÒ<0x16>‚¢â<0xff>Ú<0x00><0x0c><0x03><0x01><0x00>d<0x15>
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 02 00 b7 00 00 00 76 b4 15 16 17 33 52 91  ........v....3R.
+  020:  a1 24 43 62 82 b1 b3 18 72 74 c1 d1 19 66 26 34  .$Cb....rt...f&4
+  030:  36 53 64 c2 e1 ff c4 00 1c 01 01 00 01 05 01 01  6Sd.............
+  040:  00 00 00 00 00 00 00 00 00 00 00 06 01 04 05 07  ................
+  050:  08 02 03 ff c4 00 3c 11 00 02 01 02 04 02 06 08  ......<.........
+  060:  05 03 04 03 01 00 00 00 00 01 02 03 04 05 11 21  ...............!
+  070:  31 06 41 12 22 51 61 71 81 07 13 14 15 32 a1 b1  1.A."Qaq.....2..
+  080:  d1 23 42 91 e1 f0 52 72 c1 24 33 c2 d2 16 82 a2  .#B...Rr.$3.....
+  090:  e2 ff da 00 0c 03 01 00 64 15                    ........d.
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+16/-19)    _____||||
+[0.6] 9N2SJ-1>GROUND:<0x08><0x00><0x03><0x00>·<0x00><0x00><0x00><0x02><0x11><0x03><0x11><0x00>?<0x00>µ4D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>D]Wp7KIí]²<0x0b>†¬¿QX©'¨–)+%<0x0d>ë‘îék@ò{úú<0x00>Iğ€íH¶Ç#e¯cƒØà<0x1c>×4ä<0x10>|<0x10>Vä<0x01><0x11><0x10><0x04>D@t<0x0d>øŞ;FÁíF¡×7¿ŠÕ<0x07>¼l<0x01>İ.Rq<0x1c><0x10>b
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 03 00 b7 00 00 00 02 11 03 11 00 3f 00 b5  .............?..
+  020:  34 44 40 11 11 00 44 44 01 11 10 04 44 40 11 11  4D@...DD....D@..
+  030:  00 44 44 01 11 10 04 44 40 11 11 00 44 5d 57 70  .DD....D@...D]Wp
+  040:  37 4b 49 ed 5d b2 0b 86 ac bf 51 58 a9 27 a8 8e  7KI.].....QX.'..
+  050:  96 29 2b 25 0d eb 91 ee e9 6b 40 f2 7b fa fa 00  .)+%.....k@.{...
+  060:  49 f0 80 ed 48 b6 c7 23 65 8d af 63 83 d8 e0 1c  I...H..#e..c....
+  070:  d7 34 e4 10 7c 10 56 e4 01 11 10 04 44 40 74 0d  .4..|.V.....D@t.
+  080:  f8 de 3b 46 c1 ed 46 a1 d7 37 bf 8a 8e d5 07 bc  ..;F..F..7......
+  090:  6c 01 dd 2e 9e 52 71 1c 10 62                    l....Rq..b
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+19/-21)    ______|||
+[0.7] 9N2SJ-1>GROUND:<0x08><0x00><0x04><0x00>·<0x00><0x00><0x00>M?78ôÎV?ãŸ86¯’ôĞÃ§om·ê<0x07>4uØ.„CV×`œ4g<0x12>vi?<0x01>=¼á@<0x7f>lw"<0xff><0x00>§µ}›i­5=TVl\.á‡³ê\ßÙF{~<0x16><0x12>{<0x1c>|<0x7f>E[Ö[İ~œºÒÜ­•“ĞWÒÈ%†¦šC<0x1c>‘¸w<0x05>®<0x1d>Áü<0x1e>¦<0x11>SŸ<0x14>ı®zAÁ<0x15>ƒv©æ[
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 04 00 b7 00 00 00 4d 3f 37 38 81 f4 ce 56  ........M?78...V
+  020:  3f e3 9f 38 36 af 92 f4 d0 c3 a7 6f 6d b7 ea 07  ?..86......om...
+  030:  34 75 d8 2e 84 43 56 d7 60 9c 34 67 12 76 69 3f  4u...CV.`.4g.vi?
+  040:  01 3d bc e1 40 7f 6c 77 22 ff 00 a7 b5 7d 9b 69  .=..@.lw"....}.i
+  050:  ad 35 3d 54 56 6c 5c 2e e1 87 b3 ea 5c df d9 46  .5=TVl\.....\..F
+  060:  7b 7e 16 12 7b 1c 7c 7f 45 5b d6 5b dd 7e 9c ba  {~..{.|.E[.[.~..
+  070:  d2 dc ad 95 93 d0 57 d2 c8 25 86 a6 9a 43 1c 91  ......W..%...C..
+  080:  b8 77 05 ae 1d c1 fc 90 1e a6 11 53 9f 14 fd ae  .w.........S....
+  090:  7a 8f 41 c1 15 83 76 a9 e6 5b                    z.A...v..[
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+19/-21)    ____||||_
+[0.5] 9N2SJ-1>GROUND:<0x08><0x00><0x05><0x00>·<0x00><0x00><0x00>êµ}¨<0x16>¶<0x1b>Õ7@­§`n0öà<0x09>F@=D‡w9%Z¶Óo>Œß<0x1d>-<0x16>¡ÑWÚkå±î,.„øÜ<0x0e><0x0b>^Ã‡4<0xfe>a<0x01>İ‘<0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>_<0x1d>ŞñC`¶Ô\.h=
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 05 00 b7 00 00 00 ea b5 7d a8 16 b6 1b d5  ..........}.....
+  020:  37 40 ad a7 60 6e 30 f6 e0 09 46 40 3d 44 87 77  7@..`n0...F@=D.w
+  030:  39 25 5a b6 d3 6f 3e 8c df 1d 2d 16 a1 d1 57 da  9%Z..o>...-...W.
+  040:  6b e5 b1 ee 2c 2e 84 90 f8 dc 0e 0b 5e c3 87 34  k...,.......^..4
+  050:  fe 61 01 dd 91 11 00 44 44 01 11 10 04 44 40 11  .a.....DD....D@.
+  060:  11 00 44 44 01 11 10 04 44 40 11 11 00 44 44 01  ..DD....D@...DD.
+  070:  11 10 04 44 40 11 11 00 44 44 01 11 10 04 44 40  ...D@...DD....D@
+  080:  11 11 00 44 44 01 11 10 04 44 40 11 11 00 5f 1d  ...DD....D@..._.
+  090:  de f1 43 60 b6 d4 5c 2e 68 3d                    ..C`..\.h=
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+20/-19)    _||||____
+[0.2] 9N2SJ-1>GROUND:<0x08><0x00><0x06><0x00>·<0x00><0x00><0x00>UPPÓ°É5ML‚8ãh<0x19>.s`<0x00><0x0a>2r[Ú-µ\vªÜnCUj¶5Á–{KÄíã¨bi>ë0æàî<0x1f>%O|“æÎær‚©±j››)l1Hd‚ÅniŠ–3Œd÷êyú¸Ÿ\a<0x01>aü¤ö¼éí<0x09>UY§ö†<0x0d>Wv…î‰÷º·<0x1f>°0ñ†œËåÃÃ©
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 06 00 b7 00 00 00 55 90 50 50 d3 b0 c9 35  ........U.PP...5
+  020:  4d 4c 82 38 e3 68 19 2e 73 8f 60 00 0a 32 72 5b  ML.8.h..s.`..2r[
+  030:  da 2d b5 5c 76 8e aa dc 6e 43 55 6a b6 35 c1 96  .-.\v...nCUj.5..
+  040:  7b 4b c4 9e ed e3 a8 62 69 3e eb 30 e6 e0 8e ee  {K.....bi>.0....
+  050:  1f 25 4f 7c 93 e6 ce e6 72 82 a9 b1 6a 9b 9b 29  .%O|....r...j..)
+  060:  6c 31 48 64 82 c5 6e 69 8a 96 33 8c 64 f7 ea 79  l1Hd..ni..3.d..y
+  070:  fa b8 9f 5c 61 01 61 fc a4 f6 bc e9 ed 09 55 59  ...\a.a.......UY
+  080:  a7 f6 9e 86 0d 57 76 85 ee 89 f7 ba b7 1f b0 30  .....Wv........0
+  090:  8e 9e f1 86 9c cb e5 c3 c3 a9                    ..........
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+18/-19)    ____||||_
+[0.5] 9N2SJ-1>GROUND:<0x08><0x00><0x07><0x00>·<0x00><0x00><0x00>9<0x03>¶{…TÛ§¼<0x1a>¿z5EE<0xff><0x00>Xßk/—<0x19>\â×TÊ\Èš\]Ñ<0x1b>|1 “€<0x17>L'(€ºßeg/<0xff><0x00>µí<0x03>ıšjZ¶¿Véªp(ŸĞGÚè<0x18><0x1a>Ö’ï<0x05>ì8<0x07>ÆF<0x0f>ÍOµæ<0x1f>h÷F÷³;‡cÖ<0x1a>z¡ğ\íU,¯-l­<0x07>âøòÇ<0x0c>´PW¢n5ïí—!9
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 07 00 b7 00 00 00 39 03 b6 7b 85 54 db a7  ........9..{.T..
+  020:  bc 1a bf 7a 35 45 45 ff 00 58 df 6b 2f 97 19 5c  ...z5EE..X.k/..\
+  030:  e2 d7 54 ca 5c c8 9a 5c 5d d1 1b 7c 31 a0 93 80  ..T.\..\]..|1...
+  040:  17 4c 27 28 80 ba df 65 67 2f ff 00 b5 ed 03 fd  .L'(...eg/......
+  050:  9a 6a 5a b6 bf 56 e9 aa 70 28 9f d0 47 da e8 18  .jZ..V..p(..G...
+  060:  1a d6 92 ef 05 ec 38 07 c6 46 0f cd 4f b5 e6 1f  ......8..F..O...
+  070:  68 f7 46 f7 b3 3b 87 63 d6 1a 7a a1 f0 5c ed 55  h.F..;.c..z..\.U
+  080:  2c 9d 81 af 2d 6c ad 07 e2 8d f8 f2 c7 0c b4 8f  ,...-l..........
+  090:  50 57 a2 6e 35 ef ed 97 21 39                    PW.n5...!9
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+19/-20)    __|||____
+[0.3] 9N2SJ-1>GROUND:<0x08><0x00><0x08><0x00>·<0x00><0x00><0x00>’{IfÖÖf¶˜Õ°²®€ÊÙ<0x1f>I;N<0x1d><0x1b>°{|ÆppGd<0x06>RDD<0x01>u-×Ü‹NĞíÎ Ö7¹›<0x0d>¶ÏHú™<0x09> <0x17>><0x16><0x0c>‘İÎÀ<0x03>æWmUcí’äƒcŠÇ³öz î¢Û¥ğE/p<0x07>÷<0x10>;<0x0e>õîò<0x08>ôa<0x08><0x0a>ÌÜíy]¹ûƒ¨µeÄ5µ·šé«¤c3ÒÂ÷ÕÂ
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 08 00 b7 00 00 00 92 7b 49 66 d6 d6 66 b6  .........{If..f.
+  020:  98 d5 b0 b2 ae 80 ca d9 1f 49 3b 4e 1d 1b b0 7b  .........I;N...{
+  030:  7c c6 70 70 47 64 06 52 44 44 01 75 2d d7 dc 8b  |.ppGd.RDD.u-...
+  040:  4e d0 ed ce a0 d6 37 b9 9b 0d b6 cf 48 fa 99 09  N.....7.....H...
+  050:  20 17 90 3e 16 0c 91 dd ce c0 03 e6 57 6d 55 63   ..>........WmUc
+  060:  ed 92 e4 83 63 8a c7 b3 f6 7a a0 ee a2 db a5 f0  ....c....z......
+  070:  45 2f 70 07 f7 10 3b 0e f5 ee f2 08 f4 61 08 0a  E/p...;......a..
+  080:  cc dc ed 79 5d b9 fb 83 a8 b5 65 c4 35 b5 b7 9a  ...y].....e.5...
+  090:  e9 ab a4 63 33 d2 c2 f7 d5 c2                    ...c3.....
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+18/-20)    _____||||
+[0.6] 9N2SJ-1>GROUND:<0x08><0x00><0x09><0x00>·<0x00><0x00><0x00>—t Î?EÖ–Óİn@h{.çµ›Ç¬6_RC}Ñ×êË%Â74¹Ôò–²P<0x1c><0x1d>Òöç<0x0e>i d<0x1e>ÅtÔ#(<0x0b>Œâ×µãOkÚº<0x1d>=ºÔ<0x10>é[¼ò6<0x16>^éIû<0x03>Üsƒ '1z<0x0c>ä<0xfe>Xu¢ñC<0x7f>·SÜ-µ\(j<0x18>$Š¦šA$r4Œ‚<0x1c>;<0x11>…å”<0x0c>,ùi´
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 09 00 b7 00 00 00 97 74 8f a0 ce 3f 45 d6  .........t...?E.
+  020:  96 d3 dd 6e 40 68 7b 2e e7 b5 9b c7 ac 36 5f 52  ...n@h{......6_R
+  030:  43 7d d1 d7 ea cb 25 c2 37 34 b9 d4 f2 96 b2 50  C}....%.74.....P
+  040:  1c 1d d2 f6 e7 0e 69 20 64 1e c5 74 d4 23 28 0b  ......i d..t.#(.
+  050:  8c e2 d7 b5 e3 4f 6b da ba 1d 3d ba d4 10 e9 5b  .....Ok...=....[
+  060:  bc f2 36 16 5e e9 49 fb 03 dc 73 83 20 27 31 7a  ..6.^.I...s. '1z
+  070:  0c e4 8e fe 81 58 75 a2 f1 43 7f b7 53 dc 2d b5  .....Xu..C..S.-.
+  080:  90 5c 28 6a 18 24 8a a6 9a 41 24 72 34 8c 82 1c  .\(j.$...A$r4...
+  090:  3b 11 85 e5 94 0c 2c f9 69 b4                    ;.....,.i.
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+19/-19)    _|||||___
+[0.3] 9N2SJ-1>GROUND:<0x08><0x00><0x00><0x00>·<0x00><0x00><0x00><0xff>Ø<0xff>à<0x00><0x10>JFIF<0x00><0x01><0x01><0x00><0x00><0x01><0x00><0x01><0x00><0x00><0xff>Û<0x00>C<0x00><0x03><0x02><0x02><0x03><0x02><0x02><0x03><0x03><0x03><0x03><0x04><0x03><0x03><0x04><0x05><0x08><0x05><0x05><0x04><0x04><0x05><0x0a><0x07><0x07><0x06><0x08><0x0c><0x0a><0x0c><0x0c><0x0b><0x0a><0x0b><0x0b><0x0d><0x0e><0x12><0x10><0x0d><0x0e><0x11><0x0e><0x0b><0x0b><0x10><0x16><0x10><0x11><0x13><0x14><0x15><0x15><0x15><0x0c><0x0f><0x17><0x18><0x16><0x14><0x18><0x12><0x14><0x15><0x14><0xff>Û<0x00>C<0x01><0x03><0x04><0x04><0x05><0x04><0x05><0x09><0x05><0x05><0x09><0x14><0x0d><0x0b><0x0d><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14>NM
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 00 00 b7 00 00 00 ff d8 ff e0 00 10 4a 46  ..............JF
+  020:  49 46 00 01 01 00 00 01 00 01 00 00 ff db 00 43  IF.............C
+  030:  00 03 02 02 03 02 02 03 03 03 03 04 03 03 04 05  ................
+  040:  08 05 05 04 04 05 0a 07 07 06 08 0c 0a 0c 0c 0b  ................
+  050:  0a 0b 0b 0d 0e 12 10 0d 0e 11 0e 0b 0b 10 16 10  ................
+  060:  11 13 14 15 15 15 0c 0f 17 18 16 14 18 12 14 15  ................
+  070:  14 ff db 00 43 01 03 04 04 05 04 05 09 05 05 09  ....C...........
+  080:  14 0d 0b 0d 14 14 14 14 14 14 14 14 14 14 14 14  ................
+  090:  14 14 14 14 14 14 14 14 4e 4d                    ........NM
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+20/-21)    __||||___
+[0.3] 9N2SJ-1>GROUND:<0x08><0x00><0x01><0x00>·<0x00><0x00><0x00><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0x14><0xff>À<0x00><0x11><0x08><0x01>§<0x01>¹<0x03><0x01>"<0x00><0x02><0x11><0x01><0x03><0x11><0x01><0xff>Ä<0x00><0x1e><0x00><0x01><0x00><0x02><0x01><0x05><0x01><0x01><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x08><0x09><0x07><0x01><0x02><0x05><0x06><0x0a><0x04><0x03><0xff>Ä<0x00>J<0x10><0x00><0x01><0x03><0x03><0x03><0x03><0x01><0x05><0x05><0x04><0x07><0x06><0x05><0x02><0x07><0x00><0x01><0x00><0x02><0x03><0x04><0x05><0x11><0x06><0x07><0x08><0x12>!1A<0x09><0x13>"Qa<0x14>2Bq#8<0x03>º
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 01 00 b7 00 00 00 14 14 14 14 14 14 14 14  ................
+  020:  14 14 14 14 14 14 14 14 14 14 14 14 14 14 14 14  ................
+  030:  14 14 14 14 14 14 ff c0 00 11 08 01 a7 01 b9 03  ................
+  040:  01 22 00 02 11 01 03 11 01 ff c4 00 1e 00 01 00  ."..............
+  050:  02 01 05 01 01 00 00 00 00 00 00 00 00 00 00 08  ................
+  060:  09 07 01 02 05 06 0a 04 03 ff c4 00 4a 10 00 01  ............J...
+  070:  03 03 03 03 01 05 05 04 07 06 05 02 07 00 01 00  ................
+  080:  02 03 04 05 11 06 07 08 12 21 31 41 09 13 22 51  .........!1A.."Q
+  090:  61 14 32 42 71 81 23 38 03 ba                    a.2Bq.#8..
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+18/-19)    _||||____
+[0.2] 9N2SJ-1>GROUND:<0x08><0x00><0x02><0x00>·<0x00><0x00><0x00>v´<0x15><0x16><0x17>3R‘¡$Cb‚±³<0x18>rtÁÑ<0x19>f&46SdÂá<0xff>Ä<0x00><0x1c><0x01><0x01><0x00><0x01><0x05><0x01><0x01><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x00><0x06><0x01><0x04><0x05><0x07><0x08><0x02><0x03><0xff>Ä<0x00><<0x11><0x00><0x02><0x01><0x02><0x04><0x02><0x06><0x08><0x05><0x03><0x04><0x03><0x01><0x00><0x00><0x00><0x00><0x01><0x02><0x03><0x04><0x05><0x11>!1<0x06>A<0x12>"Qaq<0x07><0x13><0x14><0x15>2¡±Ñ#B‘áğRrÁ$3ÂÒ<0x16>‚¢â<0xff>Ú<0x00><0x0c><0x03><0x01><0x00>d<0x15>
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 02 00 b7 00 00 00 76 b4 15 16 17 33 52 91  ........v....3R.
+  020:  a1 24 43 62 82 b1 b3 18 72 74 c1 d1 19 66 26 34  .$Cb....rt...f&4
+  030:  36 53 64 c2 e1 ff c4 00 1c 01 01 00 01 05 01 01  6Sd.............
+  040:  00 00 00 00 00 00 00 00 00 00 00 06 01 04 05 07  ................
+  050:  08 02 03 ff c4 00 3c 11 00 02 01 02 04 02 06 08  ......<.........
+  060:  05 03 04 03 01 00 00 00 00 01 02 03 04 05 11 21  ...............!
+  070:  31 06 41 12 22 51 61 71 81 07 13 14 15 32 a1 b1  1.A."Qaq.....2..
+  080:  d1 23 42 91 e1 f0 52 72 c1 24 33 c2 d2 16 82 a2  .#B...Rr.$3.....
+  090:  e2 ff da 00 0c 03 01 00 64 15                    ........d.
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+20/-20)    _||||____
+[0.2] 9N2SJ-1>GROUND:<0x08><0x00><0x03><0x00>·<0x00><0x00><0x00><0x02><0x11><0x03><0x11><0x00>?<0x00>µ4D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>D]Wp7KIí]²<0x0b>†¬¿QX©'¨–)+%<0x0d>ë‘îék@ò{úú<0x00>Iğ€íH¶Ç#e¯cƒØà<0x1c>×4ä<0x10>|<0x10>Vä<0x01><0x11><0x10><0x04>D@t<0x0d>øŞ;FÁíF¡×7¿ŠÕ<0x07>¼l<0x01>İ.Rq<0x1c><0x10>b
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 03 00 b7 00 00 00 02 11 03 11 00 3f 00 b5  .............?..
+  020:  34 44 40 11 11 00 44 44 01 11 10 04 44 40 11 11  4D@...DD....D@..
+  030:  00 44 44 01 11 10 04 44 40 11 11 00 44 5d 57 70  .DD....D@...D]Wp
+  040:  37 4b 49 ed 5d b2 0b 86 ac bf 51 58 a9 27 a8 8e  7KI.].....QX.'..
+  050:  96 29 2b 25 0d eb 91 ee e9 6b 40 f2 7b fa fa 00  .)+%.....k@.{...
+  060:  49 f0 80 ed 48 b6 c7 23 65 8d af 63 83 d8 e0 1c  I...H..#e..c....
+  070:  d7 34 e4 10 7c 10 56 e4 01 11 10 04 44 40 74 0d  .4..|.V.....D@t.
+  080:  f8 de 3b 46 c1 ed 46 a1 d7 37 bf 8a 8e d5 07 bc  ..;F..F..7......
+  090:  6c 01 dd 2e 9e 52 71 1c 10 62                    l....Rq..b
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+19/-18)    ||||_____
+[0.1] 9N2SJ-1>GROUND:<0x08><0x00><0x04><0x00>·<0x00><0x00><0x00>M?78ôÎV?ãŸ86¯’ôĞÃ§om·ê<0x07>4uØ.„CV×`œ4g<0x12>vi?<0x01>=¼á@<0x7f>lw"<0xff><0x00>§µ}›i­5=TVl\.á‡³ê\ßÙF{~<0x16><0x12>{<0x1c>|<0x7f>E[Ö[İ~œºÒÜ­•“ĞWÒÈ%†¦šC<0x1c>‘¸w<0x05>®<0x1d>Áü<0x1e>¦<0x11>SŸ<0x14>ı®zAÁ<0x15>ƒv©æ[
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 04 00 b7 00 00 00 4d 3f 37 38 81 f4 ce 56  ........M?78...V
+  020:  3f e3 9f 38 36 af 92 f4 d0 c3 a7 6f 6d b7 ea 07  ?..86......om...
+  030:  34 75 d8 2e 84 43 56 d7 60 9c 34 67 12 76 69 3f  4u...CV.`.4g.vi?
+  040:  01 3d bc e1 40 7f 6c 77 22 ff 00 a7 b5 7d 9b 69  .=..@.lw"....}.i
+  050:  ad 35 3d 54 56 6c 5c 2e e1 87 b3 ea 5c df d9 46  .5=TVl\.....\..F
+  060:  7b 7e 16 12 7b 1c 7c 7f 45 5b d6 5b dd 7e 9c ba  {~..{.|.E[.[.~..
+  070:  d2 dc ad 95 93 d0 57 d2 c8 25 86 a6 9a 43 1c 91  ......W..%...C..
+  080:  b8 77 05 ae 1d c1 fc 90 1e a6 11 53 9f 14 fd ae  .w.........S....
+  090:  7a 8f 41 c1 15 83 76 a9 e6 5b                    z.A...v..[
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+19/-19)    ||||_____
+[0.1] 9N2SJ-1>GROUND:<0x08><0x00><0x05><0x00>·<0x00><0x00><0x00>êµ}¨<0x16>¶<0x1b>Õ7@­§`n0öà<0x09>F@=D‡w9%Z¶Óo>Œß<0x1d>-<0x16>¡ÑWÚkå±î,.„øÜ<0x0e><0x0b>^Ã‡4<0xfe>a<0x01>İ‘<0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>DD<0x01><0x11><0x10><0x04>D@<0x11><0x11><0x00>_<0x1d>ŞñC`¶Ô\.h=
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 05 00 b7 00 00 00 ea b5 7d a8 16 b6 1b d5  ..........}.....
+  020:  37 40 ad a7 60 6e 30 f6 e0 09 46 40 3d 44 87 77  7@..`n0...F@=D.w
+  030:  39 25 5a b6 d3 6f 3e 8c df 1d 2d 16 a1 d1 57 da  9%Z..o>...-...W.
+  040:  6b e5 b1 ee 2c 2e 84 90 f8 dc 0e 0b 5e c3 87 34  k...,.......^..4
+  050:  fe 61 01 dd 91 11 00 44 44 01 11 10 04 44 40 11  .a.....DD....D@.
+  060:  11 00 44 44 01 11 10 04 44 40 11 11 00 44 44 01  ..DD....D@...DD.
+  070:  11 10 04 44 40 11 11 00 44 44 01 11 10 04 44 40  ...D@...DD....D@
+  080:  11 11 00 44 44 01 11 10 04 44 40 11 11 00 5f 1d  ...DD....D@..._.
+  090:  de f1 43 60 b6 d4 5c 2e 68 3d                    ..C`..\.h=
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+20/-18)    __||||___
+[0.3] 9N2SJ-1>GROUND:<0x08><0x00><0x06><0x00>·<0x00><0x00><0x00>UPPÓ°É5ML‚8ãh<0x19>.s`<0x00><0x0a>2r[Ú-µ\vªÜnCUj¶5Á–{KÄíã¨bi>ë0æàî<0x1f>%O|“æÎær‚©±j››)l1Hd‚ÅniŠ–3Œd÷êyú¸Ÿ\a<0x01>aü¤ö¼éí<0x09>UY§ö†<0x0d>Wv…î‰÷º·<0x1f>°0ñ†œËåÃÃ©
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 06 00 b7 00 00 00 55 90 50 50 d3 b0 c9 35  ........U.PP...5
+  020:  4d 4c 82 38 e3 68 19 2e 73 8f 60 00 0a 32 72 5b  ML.8.h..s.`..2r[
+  030:  da 2d b5 5c 76 8e aa dc 6e 43 55 6a b6 35 c1 96  .-.\v...nCUj.5..
+  040:  7b 4b c4 9e ed e3 a8 62 69 3e eb 30 e6 e0 8e ee  {K.....bi>.0....
+  050:  1f 25 4f 7c 93 e6 ce e6 72 82 a9 b1 6a 9b 9b 29  .%O|....r...j..)
+  060:  6c 31 48 64 82 c5 6e 69 8a 96 33 8c 64 f7 ea 79  l1Hd..ni..3.d..y
+  070:  fa b8 9f 5c 61 01 61 fc a4 f6 bc e9 ed 09 55 59  ...\a.a.......UY
+  080:  a7 f6 9e 86 0d 57 76 85 ee 89 f7 ba b7 1f b0 30  .....Wv........0
+  090:  8e 9e f1 86 9c cb e5 c3 c3 a9                    ..........
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+9N2SJ-1 audio level = 61(+19/-20)    ___|||___
+[0.4] 9N2SJ-1>GROUND:<0x08><0x00><0x07><0x00>·<0x00><0x00><0x00>9<0x03>¶{…TÛ§¼<0x1a>¿z5EE<0xff><0x00>Xßk/—<0x19>\â×TÊ\Èš\]Ñ<0x1b>|1 “€<0x17>L'(€ºßeg/<0xff><0x00>µí<0x03>ıšjZ¶¿Véªp(ŸĞGÚè<0x18><0x1a>Ö’ï<0x05>ì8<0x07>ÆF<0x0f>ÍOµæ<0x1f>h÷F÷³;‡cÖ<0x1a>z¡ğ\íU,¯-l­<0x07>âøòÇ<0x0c>´PW¢n5ïí—!9
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 154
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  08 00 07 00 b7 00 00 00 39 03 b6 7b 85 54 db a7  ........9..{.T..
+  020:  bc 1a bf 7a 35 45 45 ff 00 58 df 6b 2f 97 19 5c  ...z5EE..X.k/..\
+  030:  e2 d7 54 ca 5c c8 9a 5c 5d d1 1b 7c 31 a0 93 80  ..T.\..\]..|1...
+  040:  17 4c 27 28 80 ba df 65 67 2f ff 00 b5 ed 03 fd  .L'(...eg/......
+  050:  9a 6a 5a b6 bf 56 e9 aa 70 28 9f d0 47 da e8 18  .jZ..V..p(..G...
+  060:  1a d6 92 ef 05 ec 38 07 c6 46 0f cd 4f b5 e6 1f  ......8..F..O...
+  070:  68 f7 46 f7 b3 3b 87 63 d6 1a 7a a1 f0 5c ed 55  h.F..;.c..z..\.U
+  080:  2c 9d 81 af 2d 6c ad 07 e2 8d f8 f2 c7 0c b4 8f  ,...-l..........
+  090:  50 57 a2 6e 35 ef ed 97 21 39                    PW.n5...!9
+------
+'nul' character found in Information part.  This should never happen with APRS.
+If this is meant to be APRS, 9N2SJ-1 is transmitting with defective software.
+deviceid_decode_dest called without any deviceid data.
+ERROR!!!  Unknown APRS Data Type Indicator: unprintable 0x08, Internal error - UNKNOWN vendor/model
+
+QRT
+gps_sock_send() write -1, s/b 38
+
+End of file on stdin.  Exiting.

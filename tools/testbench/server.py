@@ -10,7 +10,7 @@ Two serial ports, no SWD and no probe serial numbers needed to run tests:
 Tests (one at a time):
   link   GS -> satellite PING x N: ACK / reply / ACK-completed come back, RSSI, latency.
   image  The PC hands the Nucleo the file chunk by chunk over the VCP (OBC link frames, see
-         Satellite_M0+/Com_sat/uart/obc_link.h). For each chunk the Nucleo transmits it over RF and
+         cpu2/satellite/ipc/obc_shared.h). For each chunk the Nucleo transmits it over RF and
          then answers  A5 5A 01 <seq> <status> 0D 0A.  The GS prints every chunk it receives as JSON;
          the bench checks that the GS got that chunk (re-sending it if not), rebuilds the file from
          the GS output and compares SHA-256 with the source.
@@ -59,9 +59,9 @@ except ImportError:                     # pragma: no cover
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-SAT_DIR = os.path.join(ROOT, "Satellite_M0+", "Com_sat")
-GS_DIR = os.path.join(ROOT, "Ground_Station")
-REPORT_DIR = os.path.join(ROOT, "test_reports")
+SAT_DIR = os.path.join(ROOT, "cpu2", "satellite")
+GS_DIR = os.path.join(ROOT, "cpu2", "ground_station")
+REPORT_DIR = os.path.join(ROOT, "docs", "reports")
 TOOLCHAIN = "/Applications/ArmGNUToolchain/15.3.rel1/arm-none-eabi/bin"
 
 CHUNK = 128
@@ -269,6 +269,21 @@ class ObcLink:
     def ports():
         return sorted(glob.glob("/dev/cu.usbmodem*"))
 
+    @staticmethod
+    def _open_quiet(port, baud):
+        """Open the ST-Link virtual COM port WITHOUT asserting DTR / RTS. A normal open pulses those lines, and on this
+        board that resets the whole STM32 (both cores). Opened by the bench's auto-reconnect it formed a loop: reset ->
+        the port glitches -> reconnect -> reset ..., one reset every ~4.5 s (found with SWD: the CPU1 and CPU2 clocks
+        restarted together; stopping the bench stopped the resets)."""
+        s = serial.Serial()
+        s.port = port
+        s.baudrate = baud
+        s.timeout = 0.02
+        s.dtr = False
+        s.rts = False
+        s.open()
+        return s
+
     def connect(self, port="", baud=115200):
         self.disconnect()
         if not port:
@@ -276,7 +291,7 @@ class ObcLink:
             if not c:
                 raise RuntimeError("no /dev/cu.usbmodem* port: plug the Nucleo's ST-Link USB cable in")
             port = c[0]
-        self.ser = serial.Serial(port, baud, timeout=0.02)
+        self.ser = self._open_quiet(port, baud)
         self.port = port
         self.baud = baud
         self.ok = True
@@ -361,14 +376,14 @@ class ObcLink:
         while not self.stop.is_set() and now() < end:
             for cand in dict.fromkeys([self.port] + self.ports()):
                 try:
-                    self.ser = serial.Serial(cand, self.baud, timeout=0.02)
+                    self.ser = self._open_quiet(cand, self.baud)
                     self.port = cand
                     self.ok = True
                     log(f"Nucleo VCP back: {cand} (it had dropped out for a moment; the board kept running)", "warn")
                     return True
                 except Exception:
                     pass
-            time.sleep(0.5)
+            time.sleep(3.0)                 # never re-open faster than this
         log("Nucleo VCP did not come back", "err")
         return False
 
@@ -550,7 +565,7 @@ def set_image(raw, name, mode="flash"):
 # tests
 # --------------------------------------------------------------------------------------
 RUN = {"lock": threading.Lock(), "thread": None, "abort": threading.Event(), "name": None}
-STATE = {"link": None, "image": None, "sdr": None, "rate": None, "cwtest": None, "sdrimage": None, "image_rx": None, "gs_log": []}
+STATE = {"link": None, "image": None, "sdr": None, "rate": None, "cwtest": None, "sdrimage": None, "imageloop": None, "image_rx": None, "gs_log": []}
 PROG = {"total": 0, "acked": set(), "got": set(), "stored": set(), "read": set(), "phase": "", "mode": "", "led": None}
 
 
@@ -593,10 +608,10 @@ def collect_rx_stats(lines):
     return {
         "decode_ok": txt.count("AX.25 DECODE OK"),
         "decode_failed": txt.count("DECODE FAILED"),
-        "checked_blocks": txt.count("checked block OK"),
+        "checked_blocks": txt.count("integrity check OK"),
         "rssi": [int(x) for x in re.findall(r"\[GS RX\] Packet #\d+ \| RSSI=(-?\d+) dBm", txt)],
         "ack_accepted": len(re.findall(r"ACK ACCEPTED|ACK Accepted", txt)) // 2 or txt.count("ACK ACCEPTED"),
-        "ping_reply": bool(re.search(r"ACK: PING OK", txt)),
+        "ping_reply": bool(re.search(r"ACK: PING OK|HK TELEMETRY PACKET DETECTED", txt)),   # CHANGED: PING is now HEALTH SAT (ACK, HK packet, ACK)
         "ack_completed": bool(re.search(r"ACK COMPLETED|ACK Completed", txt)),
     }
 
@@ -966,6 +981,16 @@ class Sdr:
         self.lines = []
 
     def present(self):
+        """Is an RTL-SDR on USB? Read from the USB registry; the dongle is not opened (opening it from a status refresh
+        can disturb a running capture)."""
+        names = [n for n, _ in _usb_devices()]
+        hit = [n for n in names if "RTL2832" in n or "RTL2838" in n or "RTL-SDR" in n.upper()]
+        if hit:
+            return True, [f"{hit[0]} is on USB (not opened; the tuner is checked when a test starts)"]
+        return False, ["no RTL-SDR on USB: plug the dongle in (directly in the Mac or a powered hub)"]
+
+    def check_tuner(self):
+        """Open the dongle once (rtl_test): used only right before a test starts."""
         try:
             r = subprocess.run(["rtl_test", "-t"], capture_output=True, text=True, timeout=12)
             out = (r.stdout + r.stderr)
@@ -976,7 +1001,7 @@ class Sdr:
             return False, ["rtl_test timed out (SDR stalled: unplug and replug it)"]
 
     def start(self, freq_mhz, gain):
-        conf = os.path.join(ROOT, "tools", "direwolf_s2s2_4800.conf")
+        conf = os.path.join(ROOT, "tools", "testbench", "direwolf_s2s2_4800.conf")
         cmd = (f"rtl_fm -f {freq_mhz:.6f}M -s 48000 -g {gain} 2>/dev/null | "
                f"direwolf -c '{conf}' -r 48000 -n 1 -B 4800 -g -t 0 -")
         self.frames, self.levels, self.lines = [], [], []
@@ -1000,10 +1025,7 @@ class Sdr:
 
     def stop(self):
         if self.proc and self.proc.poll() is None:
-            try:
-                os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
-            except Exception:
-                pass
+            _stop_pipeline(self.proc)
         self.proc = None
 
 
@@ -1136,6 +1158,26 @@ def _ax25_addr(b):
     return "".join(chr(c >> 1) for c in b[:6]).strip() + "-" + str((b[6] >> 1) & 15)
 
 
+def _stop_pipeline(proc):
+    """Shut `rtl_fm | direwolf` down politely: SIGINT lets rtl_fm release the dongle cleanly, SIGTERM after 6 s, and SIGKILL only
+    as a last resort after 15 s. Killing rtl_fm abruptly leaves the RTL-SDR stalled (it enumerates but delivers no samples
+    until it is unplugged and replugged)."""
+    try:
+        pg = os.getpgid(proc.pid)
+    except Exception:
+        return
+    for sig, wait in ((signal.SIGINT, 6.0), (signal.SIGTERM, 9.0), (signal.SIGKILL, 1.0)):
+        try:
+            os.killpg(pg, sig)
+        except Exception:
+            return
+        end = now() + wait
+        while now() < end:
+            if proc.poll() is not None:
+                return
+            time.sleep(0.2)
+
+
 def test_sdrimage(cfg, abort):
     """Proof without the ground station: the Nucleo sends the selected image over the air, an RTL-SDR + Direwolf (a
     stock AX.25 / G3RUH decoder, nothing of ours) receives it, and the bench checks every frame it delivers:
@@ -1145,7 +1187,7 @@ def test_sdrimage(cfg, abort):
         raise RuntimeError("no image selected")
     if not OBC.connected():
         raise RuntimeError("connect the Nucleo's ST-Link VCP port first")
-    ok_sdr, why = SDR.present()
+    ok_sdr, why = SDR.check_tuner()
     if not ok_sdr:
         raise RuntimeError("SDR not usable: " + " | ".join(why[:3]) + " (unplug and replug the dongle)")
     freq = float(cfg.get("freq_mhz", 434.9936))
@@ -1157,7 +1199,7 @@ def test_sdrimage(cfg, abort):
     total = math.ceil(len(src) / CHUNK)
     log(f"IMAGE VIA SDR + DIREWOLF: {IMG['name']} {len(src)} B = {total} fragments; SDR tuned to {freq} MHz (the dongle's own clock error moves it away from 435.000)")
 
-    conf = os.path.join(ROOT, "tools", "direwolf_s2s2_4800.conf")
+    conf = os.path.join(ROOT, "tools", "testbench", "direwolf_s2s2_4800.conf")
     pipe = (f"rtl_fm -f {freq:.6f}M -s 48000 -g {gain} 2>/dev/null | "
             f"direwolf -c '{conf}' -r 48000 -n 1 -B 4800 -g -t 0 -")
     dw = subprocess.Popen(pipe, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid)
@@ -1294,12 +1336,7 @@ def test_sdrimage(cfg, abort):
         PROG["phase"] = "done"
     finally:
         stop.set()
-        try:
-            os.killpg(os.getpgid(dw.pid), signal.SIGINT)
-            time.sleep(1.5)
-            os.killpg(os.getpgid(dw.pid), signal.SIGKILL)
-        except Exception:
-            pass
+        _stop_pipeline(dw)
     digest()
     rebuilt = b"".join(good.get(i, b"\x00" * CHUNK) for i in range(total))[:len(src)]
     IMG["rx"] = rebuilt
@@ -1315,6 +1352,64 @@ def test_sdrimage(cfg, abort):
     log(f"IMAGE VIA SDR + DIREWOLF {res['verdict']}: Direwolf delivered {len(frames)} frames, {len(good)}/{total} valid camera fragments, "
         f"rebuilt picture {'IDENTICAL to' if match else 'DIFFERENT from'} the image sent ({res['rx_sha256'][:16]}... vs {res['src_sha256'][:16]}...)",
         "ok" if match else "err")
+
+
+def test_imageloop(cfg, abort):
+    """Send the selected image's camera fragments over the air again and again until Stop (or `seconds`), for screenshots of a
+    terminal Direwolf (rtl_fm | direwolf -d p). The image is stored in CPU1's flash first if the file there is not the
+    selected one. `fragments` = how many fragments per round, counting from the first (0 = the whole image): the first
+    fragment carries the JPEG header (FF D8 FF E0 ... "JFIF"), so a short round shows it every few seconds."""
+    if IMG["bytes"] is None:
+        raise RuntimeError("no image selected")
+    if not OBC.connected():
+        raise RuntimeError("connect the Nucleo's ST-Link VCP port first")
+    src = IMG["bytes"]
+    if math.ceil(len(src) / CHUNK) > FLASH_CHUNKS:
+        set_image(IMG["orig"] or src, IMG["name"], "flash")
+        src = IMG["bytes"]
+    total = math.ceil(len(src) / CHUNK)
+    per_round = total if int(cfg.get("fragments", 10)) <= 0 else min(total, int(cfg.get("fragments", 10)))
+    secs = max(10, min(43200, int(cfg.get("seconds", 3600))))
+    log(f"CAMERA FRAGMENT LOOP: {IMG['name']} {len(src)} B = {total} fragments; sending the first {per_round} over and over for up to {secs} s")
+    if not OBC.ready(abort, timeout=180):
+        raise RuntimeError("the satellite did not answer on the VCP")
+
+    def cmd(c, seq=0, tot=0, data=b"", to=10):
+        mk = OBC.mark()
+        OBC.send(c, seq, tot, data)
+        return OBC.wait_ack(c, seq, mk, to, abort)
+
+    info = OBC.info(abort)
+    have = (info or "") if isinstance(info, str) else str(info or "")
+    if f"{len(src)} B" in have:               # same size as the selected image: it is the file already in CPU1's flash
+        log(f"  the image is already in CPU1's flash ({have.strip()[:90]})")
+    else:
+        log("-- phase: store the image in CPU1 flash")
+        cmd(OBC_ERASE, 1, 0, b"", 15)
+        for i in range(total):
+            for _ in range(4):
+                if cmd(OBC_STORE, i, total, src[i * CHUNK:(i + 1) * CHUNK]) == 0:
+                    break
+            else:
+                raise RuntimeError(f"flash write of fragment {i} failed")
+        log(f"  {total}/{total} fragments stored", "ok")
+    log("CAMERA FRAGMENTS ON AIR: run  rtl_fm -f <your SDR frequency> -s 48000 -g 30 | direwolf -c tools/testbench/direwolf_s2s2_4800.conf -r 48000 -n 1 -B 4800 -g -t 0 -d p -  "
+        "and screenshot the terminal. Press Stop to end.", "ok")
+    t_end = now() + secs
+    sent = rounds = 0
+    try:
+        while now() < t_end and not abort.is_set():
+            for i in range(per_round):
+                if abort.is_set() or now() >= t_end:
+                    break
+                if cmd(OBC_SENDF, i, total, b"", 110) == 0:
+                    sent += 1
+            rounds += 1
+            if rounds % 5 == 0:
+                log(f"  {sent} fragments sent so far ({rounds} rounds)")
+    finally:
+        log(f"CAMERA FRAGMENT LOOP OFF: {sent} fragments sent in {rounds} round(s)", "ok")
+    set_result("imageloop", {"test": "imageloop", "when": now(), "verdict": "PASS", "sent": sent, "rounds": rounds, "fragments": per_round})
 
 
 def test_cwtest(cfg, abort):
@@ -1367,14 +1462,14 @@ def test_cwtest(cfg, abort):
     set_result("cwtest", {"test": "cwtest", "when": now(), "verdict": "PASS", "seconds": secs, "gs_decoded_hello": heard})
 
 
-TESTS = {"link": test_link, "image": test_image, "sdr": test_sdr, "rate": test_rate, "cwtest": test_cwtest, "sdrimage": test_sdrimage}
+TESTS = {"link": test_link, "image": test_image, "sdr": test_sdr, "rate": test_rate, "cwtest": test_cwtest, "sdrimage": test_sdrimage, "imageloop": test_imageloop}
 
 
 def start_test(name, cfg):
     """Run one test in a thread (only one at a time). Clears the satellite replay floor first (RESET frame)."""
     if not RUN["lock"].acquire(blocking=False):
         raise RuntimeError(f"test '{RUN['name']}' is still running")
-    if name not in ("cwtest", "sdrimage") and not GS.connected():     # these tests only need the Nucleo (and the SDR); the GS is just a cross-check
+    if name not in ("cwtest", "sdrimage", "imageloop") and not GS.connected():     # these tests only need the Nucleo (and the SDR); the GS is just a cross-check
         RUN["lock"].release()
         raise RuntimeError("connect the GS serial port first")
     RUN["abort"].clear()
@@ -1421,20 +1516,19 @@ def run_cmd(args, cwd, label):
 
 def do_build(target):
     d = SAT_DIR if target == "sat" else GS_DIR
-    run_cmd(["gmake", "-j4"], d, f"build {target}")
+    run_cmd(["make", "-j4"], d, f"build {target}")
     status_build(target)
 
 
 def do_flash(target, cfg):
     d = SAT_DIR if target == "sat" else GS_DIR
-    tgt = "flash-sat" if target == "sat" else "flash-gs"
     probe = cfg.get("sat_probe" if target == "sat" else "gs_probe") or DEFAULTS["sat_probe" if target == "sat" else "gs_probe"]
-    run_cmd(["gmake", tgt, f"SERIAL={probe}"], d, f"flash {target}")
+    run_cmd(["make", "flash", f"SERIAL={probe}"], d, f"flash {target}")
 
 
 def status_build(target):
-    d, name = (SAT_DIR, "satellite") if target == "sat" else (GS_DIR, "gs_m0plus")
-    b = os.path.join(d, name + ".bin")
+    d, name = (SAT_DIR, "satellite") if target == "sat" else (GS_DIR, "ground_station")
+    b = os.path.join(d, "build", name + ".bin")
     if os.path.exists(b):
         return {"bin": os.path.getsize(b), "mtime": os.path.getmtime(b), "limit": 57344}
     return None
@@ -1448,15 +1542,30 @@ def git_info():
         return "?"
 
 
-def probes():
+def _usb_devices():
+    """(product name, serial number) of every USB device, read from macOS's USB registry. This does NOT talk to the
+    devices. (It used to run `st-info --probe` and `rtl_test -t`: both open the device, and probing an ST-Link resets the
+    board it is attached to -- a status refresh was resetting the Nucleo in the middle of tests.)"""
     out = []
     try:
-        r = subprocess.run(["st-info", "--probe"], capture_output=True, text=True, timeout=10)
-        for m in re.finditer(r"serial:\s+(\w+)", r.stdout):
-            out.append(m.group(1))
+        txt = subprocess.run(["ioreg", "-p", "IOUSB", "-l", "-w0"], capture_output=True, text=True, timeout=15).stdout
+        name = None
+        for ln in txt.splitlines():
+            m = re.search(r'"USB Product Name" = "([^"]*)"', ln)
+            if m:
+                name = m.group(1)
+                out.append([name, ""])
+                continue
+            m = re.search(r'"USB Serial Number" = "([^"]*)"', ln)
+            if m and out:
+                out[-1][1] = m.group(1)
     except Exception:
         pass
-    return out
+    return [tuple(x) for x in out]
+
+
+def probes():
+    return [sn for name, sn in _usb_devices() if "stlink" in name.lower().replace("-", "").replace("_", "").replace(" ", "") and sn]
 
 
 _sdr_cache = {"t": 0, "v": None}
@@ -1482,11 +1591,11 @@ def get_status(fresh=False):
                       "fit": IMG["fit"], "type": kind_of(IMG["bytes"])[0] if IMG["bytes"] else None,
                       "fits_flash": (math.ceil(len(IMG["bytes"]) / CHUNK) <= FLASH_CHUNKS) if IMG["bytes"] else None},
             "results": {k: ({kk: vv for kk, vv in v.items() if kk != "raw_frames"} if v else None) for k, v in STATE.items()
-                        if k in ("link", "image", "sdr", "rate", "cwtest", "sdrimage")}}
+                        if k in ("link", "image", "sdr", "rate", "cwtest", "sdrimage", "imageloop")}}
 
 
 def save_report(note=""):
-    """Write test_reports/<time>/: report.json/html, source + received file, raw GS and Nucleo logs, LED trace."""
+    """Write docs/reports/<time>/: report.json/html, source + received file, raw GS and Nucleo logs, LED trace."""
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     d = os.path.join(REPORT_DIR, ts)
     os.makedirs(d, exist_ok=True)
@@ -1528,10 +1637,11 @@ def save_report(note=""):
             rows += f"<tr><td>{k}</td><td>not run</td><td></td></tr>"
             continue
         det = "<br>".join(f"{html.escape(str(a))}: {html.escape(str(b))}" for a, b in r.items()
-                          if a not in ("rows", "frames", "test", "when", "verdict", "missing", "detail"))
+                          if a not in ("rows", "test", "when", "verdict", "missing", "detail", "raw_frames")
+                          and not (a == "frames" and isinstance(b, list)))
         if r.get("rows"):
             det += "<br>" + "<br>".join(html.escape(json.dumps(x)) for x in r["rows"])
-        if r.get("frames"):
+        if isinstance(r.get("frames"), list):
             det += "<br>" + "<br>".join(html.escape(x) for x in r["frames"][:10])
         if r.get("missing"):
             det += "<br>missing chunks: " + html.escape(str(r["missing"]))
@@ -1541,7 +1651,7 @@ def save_report(note=""):
 table{{border-collapse:collapse;width:100%}}.PASS{{color:#0a7a2f;font-weight:700}}.FAIL{{color:#b00020;font-weight:700}}
 .PARTIAL{{color:#b36b00;font-weight:700}}figure{{display:inline-block;margin:0 1rem 1rem 0}}img{{max-width:320px;image-rendering:auto}}</style>
 <h1>S2S2 link test report</h1><p>{rep['generated']} · git {st['git']} · satellite.bin {st['sat_build'] and st['sat_build']['bin']} B ·
-gs_m0plus.bin {st['gs_build'] and st['gs_build']['bin']} B</p><p>{html.escape(note)}</p>
+ground_station.bin {st['gs_build'] and st['gs_build']['bin']} B</p><p>{html.escape(note)}</p>
 <table><tr><th>test</th><th>verdict</th><th>details</th></tr>{rows}</table><h2>Images</h2>{imgs or '<p>none</p>'}
 <p>Raw logs: gs_uart.log (ground station), sat_vcp.log (Nucleo ST-Link VCP) · machine-readable: report.json</p>"""
     open(os.path.join(d, "report.html"), "w").write(page)

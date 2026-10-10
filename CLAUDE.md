@@ -5,33 +5,27 @@ Dual-core STM32WL55JC1 comms firmware. CPU1 (Cortex-M4) runs NuttX (`nuttx/`,
 
 ## Layout
 
-- `Satellite_M0+/Com_sat/` -- satellite CPU2 firmware. **Reference code** from
-  `github.com/PrmBRana/dummy-camera-live` (commit `0b807890`), plus the additions below.
-- `Ground_Station/` -- ground-station CPU2 firmware (same reference, same additions).
-- `shareRAM/ipc/` -- reference shared-RAM / IPCC headers.
-- `tools/` -- Python host tools (`console.py` web bench console, GUIs, decoder,
-  `s2s2_tui.py` build/flash TUI). Venv: `tools/.venv`.
-- `fec_asm_tests/` -- Python model + emulator tests for the assembly FEC core.
-- Repo root `Kconfig`, `CMakeLists.txt`, `configs/`, `include/`, `scripts/`, `src/` --
-  the live NuttX board directory for `nucleo-wl55jc`. Do not delete.
-- Removed 2026-10-07 (old `JC2/` firmware + stale docs): archived outside the repo at
-  `../s2s2-link_removed_2026-10-07.tar.gz`.
+See `README.md` (layout, quick start). Short version: `cpu2/{common,satellite,ground_station}` = CPU2 firmware (**reference code**
+from `github.com/PrmBRana/dummy-camera-live` commit `0b807890`, plus our additions; `common/` is what was byte-identical in both
+images), `tools/{config,testbench,ground_software,flash}`, `tests/{host,tag_asm}`, `docs/`. The repo root `Kconfig`,
+`CMakeLists.txt`, `configs/`, `include/`, `scripts/`, `src/` are the live NuttX board directory for `nucleo-wl55jc`: do not move or
+delete them. Venv: `tools/.venv`. Old `JC2/`, `V1.4`, reference snapshots, `shareRAM/`, FEC tests were archived outside the repo
+(`../s2s2-link_removed_2026-10-07.tar.gz`, `../s2s2-link_removed_2026-10-10.tar.gz`; full pre-cleanup copy
+`../s2s2-link_before_cleanup_2026-10-10.tgz`).
 
-To see exactly what differs from the reference: clone it and
-`diff -r <clone>/Satellite_M0+/Com_sat Satellite_M0+/Com_sat` (and `Ground_Station`).
-Existing reference files touched: `Mission/protocol.{c,h}`, `satellite_main.c` (+19),
-`satellite_app.c` (+2), `gs_app.c` (+13), the two Makefiles.
-
-## Build / flash
+## Build / flash / configuration
 
 ```
-make            # TUI: configure, build, memory stats, pick ST-Links, flash
-make build | flash | flash-all | memstat | probes | clean | nuttx
+make               # TUI (menuconfig): configure everything, build, memory stats, pick ST-Links, flash
+make configure     # generate generated/{s2s2_config.h, s2s2.mk, secrets.h} from .s2s2.config (no UI)
+make defconfig | newkey | build | flash | flash-all | memstat | probes | clean | nuttx | testbench | test
 ```
-Settings live in `.s2s2.config`. Per-tree Makefiles also work directly:
-`make [AUTH=TRUE|FALSE] [DEBUG=T|F] [SEAL_TEST=TRUE] [SERIAL=<probe>]`, plus
-`probes`, `c2boot`, `flash-m4`, `flash-sat`, `flash-gs`, `flash-all`.
-`DEBUG=T` (-Og -g3) will not fit the satellite's 56 KB flash.
+`.s2s2.config` (JSON, git-ignored) is the single source of truth: targets, AUTH, DEBUG, LOG, FRONTEND, RTC timer, project name, call signs
+and SSIDs, downlink/uplink Hz, CW dit ms, beacon period, probes. `generated/s2s2_config.h` carries the mission values into both images
+(`S2S2_*` macros), `generated/s2s2.mk` the build options, `generated/secrets.h` the random AUTH key (created when missing, replaced only by
+`make newkey`; never commit it; both boards must be built from the same file, compare the `key xxxxxxxx` fingerprint in both boot messages).
+Per-image Makefiles also work directly: `cd cpu2/satellite && make [AUTH=TRUE|FALSE] [DEBUG=T|F] [FRONTEND=..] [SERIAL=<probe>]`,
+`make flash | size | probes | c2boot | flash-m4 | clean`; outputs in `cpu2/<image>/build/`. `DEBUG=T` (-Og -g3) will not fit the satellite's 56 KB flash.
 
 Toolchain: use the official ARM GNU Toolchain (`/Applications/ArmGNUToolchain/*`); the
 Makefiles pick it automatically. Homebrew's `arm-none-eabi-gcc` 16.x cannot find newlib
@@ -40,37 +34,22 @@ headers. `CPATH`/`C_INCLUDE_PATH` must be unset.
 CPU1 (NuttX): `cd nuttx && ./tools/configure.sh nucleo-wl55jc:demo`, enable
 `CONFIG_ARCH_BOARD_ENABLE_CPU2`, `CONFIG_BOARD_LATE_INITIALIZE`, `CONFIG_EXAMPLES_S2S2SIM`,
 **disable `CONFIG_ARCH_BOARD_FLASH_MOUNT`** and the serial console on LPUART1, then `gmake -j4`.
-Needs `brew install make flock` (system make 3.81 is too old; `flock` is absent on macOS).
+Needs `brew install make flock` (system make 3.81 is too old for NuttX; `flock` is absent on macOS).
 
-## Light FEC wrap + AUTH (our additions)
+## Integrity check (AUTH)
 
-Payloads <= 107 bytes are wrapped in `Protocol_CreatePacket`; `Protocol_DecodePayload`
-is the inverse. Wire: `[counter(4)][len(1)][payload][pad to 112][tag(8)]` + 32 repair
-bytes = 152 bytes (120 data + 32 repair). Larger payloads (128-byte housekeeping) go out
-unwrapped, as in the reference. Corrects up to 16 byte errors per packet.
+FEC was removed (2026-10-10). With `AUTH=TRUE` every payload <= 107 bytes gets a 12-byte trailer behind the plain Packet-Format information
+field: `[payload][counter(4, big endian)][tag(8)]`; the tag is a keyed 64-bit digest over payload + counter, the counter a replay counter.
+Longer payloads (138-byte camera fragments, 128-byte telemetry) are untouched. 20 leading HDLC flags on every packet. Both ends must use the same
+AUTH setting and key. Counters are RAM-only: after a reboot the sender restarts at 1 and the receiver rejects until `Seal_ResetRxFloor` (bench RESET).
 
-- `Mission/seal_core.S` (+ generated `seal_tables.S`): hand-written Thumb-1 core:
-  `seal_encode`, `seal_syndromes`, `seal_decode` (BM, Chien, Forney, re-check) and
-  `seal_tag` (SipHash-2-4, guarded by `AUTH_ENABLE`; tested against the official vector
-  and 664 random cases by `fec_asm_tests/test_seal_tag.py`). Key/data must be word aligned.
-  1,168 B code + 832 B tables. Tested under Unicorn against `fec_asm_tests/fec_model.py`
-  (`test_seal_asm.py`, `stress_seal_asm.py`: 1,537 cases, no overruns, no false successes).
-- `Mission/seal_wrap.{c,h}`: wrap/unwrap glue, keyed SipHash-2-4 tag + replay counter
-  (AUTH). Counters are RAM-only: after a reboot the sender restarts at 1 and the receiver
-  rejects until it is reset too.
-- Satellite drops any command that is not a valid block when `AUTH_ENABLE=1`.
-- Boot self-test sets `g_sealSelfTest` (`0xA5A50001` pass); read it over SWD. Passed on chip.
-- Wrapped frames use only 4 leading HDLC flags (`protocol.c`): the satellite's RX has no
-  sync word and starts capturing at preamble detect, so ~18 of its 200 bytes are
-  preamble+sync. With 12 flags the closing flag/FCS fell off the end. Verified on air.
-- `Mission/mini_printf.c` replaces newlib's vsnprintf/snprintf (-1.2 KB); host tests in
-  `host_tests/` (`rt_wrap.c`: wrap round trip, replay, tamper; host `seal_decode` is a
-  clean-codeword check only).
-- Naming is deliberately neutral in source (`seal_*`); do not describe the algorithm in
-  user-facing text -- call it the "light FEC wrap" / "integrity check".
-
-Regenerate tables: `cd fec_asm_tests && python3 gen_seal_tables.py seal_tables.S`, copy to
-both `Mission/` dirs. Emulator tests need `pip install unicorn` (scratch venv).
+- `cpu2/common/protocol/seal_tag.S`: hand-written Thumb-1 tag function (tested against the official vector and 664 random cases by
+  `tests/tag_asm/run.sh`; needs `pip install unicorn` in a scratch venv). Key and data must be word aligned.
+- `cpu2/common/protocol/seal_wrap.{c,h}`: wrap / unwrap, replay floor, boot self-test (`g_sealSelfTest` = `0xA5A50001` pass, readable over SWD).
+- The satellite drops any command without a valid trailer when AUTH is on.
+- `cpu2/common/system/mini_printf.c` replaces newlib's vsnprintf/snprintf (-1.2 KB); host tests in `tests/host/` (`run.sh`: round trip, every single
+  flipped bit rejected, replay, plain packet rejected).
+- Naming is deliberately neutral in source (`seal_*`); do not describe the algorithm in user-facing text -- call it the "integrity check".
 
 ## Hardware findings (don't re-derive)
 
@@ -126,8 +105,7 @@ the image is application code, ST radio middleware (`radio_driver/`, ~8.7 KB) an
   nothing calls `SystemApp_Init()`/`UTIL_TIMER_Init()`, the RTC clock was never enabled (RTC and RCC_BDCR
   read back 0 on the running board) and every alarm start was a no-op. It is now `TIMER_IF_USE_RTC=0`
   stubs with identical behaviour; `make TIMER_IF_USE_RTC=1` builds the old driver.
-- Regression check on hardware: `tools/.venv/bin/python tools/e2e_ping.py` (GS PING -> 3 wrapped downlink
-  frames decoded). The satellite only listens ~50 s of ~95 s, so it retries PING until it lands.
+- Regression check on hardware: `tools/.venv/bin/python tools/testbench/e2e_ping.py` (GS PING = HEALTH SAT -> ACK, HK packet, ACK decoded). The satellite only listens ~50 s of ~95 s, so it retries PING until it lands.
 
 ## Test bench GUI + CPU1 image path (2026-10-08)
 
@@ -139,7 +117,7 @@ ports and no SWD: the GS FTDI (`/dev/cu.usbserial-*`) and the Nucleo's ST-Link V
 Image path: PC --VCP--> **CPU1 (NuttX app `apps/examples/s2s2obc`)** stores the file on **LittleFS in CPU1's internal flash**
 (pages 72..99 = `0x08024000..0x08031FFF`, mounted `/obc`) -> CPU1 reads chunks from the file into the shared flash ring
 (`0x20008840`) -> CPU2 transmits them -> GS. CPU1 owns LPUART1 (the VCP); CPU2 does not touch it. Handshake block
-`0x20008F00` = `Satellite_M0+/Com_sat/ipc/obc_shared.h`. LEDs: blue = writing flash, green = reading, yellow = CPU2 TX.
+`0x20008F00` = `cpu2/satellite/ipc/obc_shared.h`. LEDs: blue = writing flash, green = reading, yellow = CPU2 TX.
 
 Frames on the VCP: PC->CPU1 `C5 x8, A7, cmd, seq(2), total(2), len, data, crc16` (CRC-16/CCITT-FALSE); CPU1->PC
 `A5 5A cmd seq(2) status 0D 0A` (+ `A5 5C seq len data crc16 0D 0A` for READF/INFO). cmds: 02 STATUS (0 = CPU1 up and CPU2
@@ -148,9 +126,9 @@ heartbeat advancing), 03 RESET (clear CPU2 replay floor), 04 new file, 05 STORE,
 NuttX (CPU1) build: `cd nuttx && gmake -j6` (needs `brew install make flock`); config: `FS_LITTLEFS=y` with all LittleFS
 size factors = 1 (default 4x = 8 KB buffers -> `ENOMEM` mount failure), `SERIAL_TERMIOS=y`,
 `INIT_ENTRYPOINT="s2s2obc_main"`. `nuttx.bin` must stay below `0x08024000` (page 72); flash with
-`make flash-m4 SERIAL=<probe>` in `Satellite_M0+/Com_sat`.
+`make flash-m4 SERIAL=<probe>` in `cpu2/satellite`.
 
-Proof tools: `tools/testbench/verify_report.py <report dir>` (rebuild from raw GS log), `tools/testbench/flash_proof.py <report dir>`
+Proof tools: `tools/testbench/verify_report.py <docs/reports/dir>` (rebuild from raw GS log), `tools/testbench/flash_proof.py <report dir>`
 (raw SWD dump of the LittleFS pages; stop the bench first, it needs the ST-Link).
 
 Learned the hard way:

@@ -1,0 +1,37 @@
+# Real Direwolf output with FEC=F (make FEC=F): no wrap, the packet is the plain AX.25 frame of the Packet Format sheet.
+# Captured 2026-10-10 13:54: satellite Nucleo (HELLO test, 4800 bit/s GMSK, firmware built with FEC=F) -> RTL-SDR -> Direwolf.
+# 49 packets decoded in 20 s.  Command:
+#   rtl_fm -f 434.9935M -s 48000 -g 30 | direwolf -c tools/direwolf_s2s2_4800.conf -r 48000 -n 1 -B 4800 -g -t 0 -d p -
+# Compare with docs/proof/direwolf_hello_raw_terminal.txt (FEC=T): there the same HELLO arrives as a 168-byte frame
+# (4-byte counter, length, HELLO, 102 zero bytes, tag, 32 repair bytes). Here it is 21 bytes: 16 AX.25 header + HELLO.
+#   8e a4 9e aa 9c 88 60 = GROUND | 72 9c 64 a6 94 40 63 = 9N2SJ-1 | 03 control | f0 PID | 48 45 4c 4c 4f = HELLO
+
+9N2SJ-1 audio level = 28(+10/-11)    _____||||
+[0.6] 9N2SJ-1>GROUND:HELLO
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 21
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  48 45 4c 4c 4f                                   HELLO
+------
+
+9N2SJ-1 audio level = 53(+23/-16)    ||||_____
+[0.1] 9N2SJ-1>GROUND:HELLO
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 21
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  48 45 4c 4c 4f                                   HELLO
+------
+
+9N2SJ-1 audio level = 57(+25/-17)    _||||____
+[0.2] 9N2SJ-1>GROUND:HELLO
+------
+U frame UI: p/f=0, No layer 3 protocol implemented., length = 21
+ dest    GROUND  0 c/r=0 res=3 last=0
+ source  9N2SJ   1 c/r=0 res=3 last=1
+  000:  8e a4 9e aa 9c 88 60 72 9c 64 a6 94 40 63 03 f0  ......`r.d..@c..
+  010:  48 45 4c 4c 4f                                   HELLO
+------

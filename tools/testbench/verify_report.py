@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Independent check of a test_reports/<time>/ folder. Does NOT use the bench code.
+"""Independent check of a docs/reports/<time>/ folder. Does NOT use the bench code.
 
-  tools/.venv/bin/python tools/testbench/verify_report.py [test_reports/<time>]   (default: newest)
+  tools/.venv/bin/python tools/testbench/verify_report.py [docs/reports/<time>]   (default: newest)
 
 It re-derives everything from the raw files:
   * SHA-256 of source.* and received.*  (and a byte compare)
@@ -28,7 +28,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("dir", nargs="?")
     a = ap.parse_args()
-    d = a.dir or sorted(glob.glob(os.path.join(ROOT, "test_reports", "*/")))[-1]
+    d = a.dir or sorted(glob.glob(os.path.join(ROOT, "docs", "reports", "*/")))[-1]
     d = d.rstrip("/")
     print("report:", d)
     rep = json.load(open(os.path.join(d, "report.json")))

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Proof that the image really sits in CPU1's internal flash (LittleFS pages 72..99).
 
-  tools/.venv/bin/python tools/testbench/flash_proof.py <test_reports/dir | source-file> [--probe SERIAL]
+  tools/.venv/bin/python tools/testbench/flash_proof.py <docs/reports/dir | source-file> [--probe SERIAL]
 
 Reads the raw flash 0x08024000..0x08031FFF straight over SWD with OpenOCD (no firmware involved),
 then looks for the source file's bytes in it. LittleFS interleaves block-pointers into file blocks,
@@ -27,7 +27,7 @@ def main():
     ap.add_argument("target", nargs="?")
     ap.add_argument("--probe", default="002E00354741500120383733")
     a = ap.parse_args()
-    t = a.target or sorted(glob.glob(os.path.join(ROOT, "test_reports", "*/")))[-1]
+    t = a.target or sorted(glob.glob(os.path.join(ROOT, "docs", "reports", "*/")))[-1]
     if os.path.isdir(t):
         src = next(iter(glob.glob(os.path.join(t, "source.*"))))
     else:
