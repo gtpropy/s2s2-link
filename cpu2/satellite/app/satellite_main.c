@@ -50,7 +50,8 @@ const RadioConfig_t SatelliteProfile = {
 };
 
 #define BURST_PACKET_COUNT      50
-#define TX_TIMEOUT_MS           1000
+#define TX_TIMEOUT_MS           
+
 /* 50-second command listen window between CW1 and CW2 as requested. */
 #define SAT_LISTEN_DURATION_MS  (50UL * 1000UL)  /* nominal listen time (log text only) */
 /* CHANGED: the CW beacon starts every SAT_BEACON_PERIOD_MS, measured from the START of the previous beacon
@@ -89,6 +90,34 @@ typedef enum {
 
 volatile AppState_t app_state = STATE_CW;
 
+/*
+ * ADDED: where did a received uplink packet end up? Counters of every stage of the command receive path, readable over SWD
+ * (symbol g_satRx, layout in tools/testbench/tb/cubus.py) so the testbench's DEBUG page can tell "nothing heard", "heard but not decoded",
+ * "decoded but rejected" and "accepted" apart without a UART. last_cmd = the last accepted 13-byte command. Counters only grow (wrap at 2^32).
+ */
+struct sat_rx_stats_s {
+    uint32_t magic;           /* 0x52583031 "RX01" */
+    uint32_t rx_done;         /* radio packets delivered by the SX126x (preamble + 200 bytes) */
+    uint32_t rx_timeout;      /* radio RX timeout flags */
+    uint32_t rx_error;        /* radio RX error flags */
+    uint32_t bad_len;         /* delivered length 0 or too long */
+    uint32_t decode_fail;     /* no valid G3RUH / HDLC frame in the packet */
+    uint32_t decode_ok;       /* frame extracted */
+    uint32_t digi;            /* frame with a digipeater path, handed to the digipeater */
+    uint32_t validate_fail;   /* FCS / structure rejected */
+    uint32_t own_echo;        /* source is our own callsign */
+    uint32_t empty;           /* no payload */
+    uint32_t auth_fail;       /* AUTH on: integrity trailer missing or wrong */
+    uint32_t not_tc;          /* payload is not a 0x53 telecommand */
+    uint32_t incomplete;      /* 0x53 but not 13 bytes: NACK 0x04 */
+    uint32_t accepted;        /* valid 13-byte command taken */
+    uint32_t ring_ok;         /* command written to the OBC command ring */
+    uint32_t ring_fail;       /* command NOT written (ring not initialised by the M4, or full) */
+    uint32_t last_tick;       /* HAL tick of the last accepted command */
+    uint8_t  last_cmd[16];
+};
+volatile struct sat_rx_stats_s g_satRx = { .magic = 0x52583031UL };
+
 static volatile bool s_cmd_service_active = false;
 static volatile uint32_t s_last_cmd_time_ms = 0;
 static uint32_t listen_start_tick = 0;
@@ -111,8 +140,14 @@ static uint8_t  s_pending_err = 0;   /* ADDED: NACK error code for a frame that 
 static char     s_pending_src_cs[7] = S2S2_GS_CALLSIGN;
 
 /* Telemetry data buffers populated via M4 IPC */
+#ifdef SAT_CUBUS
+/* CUBUS: no made-up start values; the beacons report 0 until the OBC has delivered the first real sample */
+static int16_t b1_data[5] = { 0, 0, 0, 0, 0 };
+static int16_t b2_data[5] = { 0, 0, 0, 0, 0 };
+#else
 static int16_t b1_data[5] = { 400, 400, 250, 250, 250 }; /* 4.00V, 4.00V, 25.0C, 25.0C, 25.0C */
 static int16_t b2_data[5] = { 100, 100, 100, 1, 2 };     /* 1.00A, 1.00A, 1.00A, Flag1=1, Flag2=2 */
+#endif
 
 static char cwBeaconlive_msg1[64];
 static char cwBeaconlive_msg2[64];
@@ -461,7 +496,12 @@ static void Sat_Forward_Command_To_M4(const uint8_t *cmd, uint16_t len)
     memcpy(rx_cmd.cmd, cmd, copy_len);
     rx_cmd.crc16 = 0;
 
-    rb_rx_write(&rx_cmd);              /* 1. ring buffer */
+    if (rb_rx_write(&rx_cmd)) {        /* 1. ring buffer */
+        g_satRx.ring_ok++;
+    } else {
+        g_satRx.ring_fail++;           /* ring not initialised by the M4, or full (it holds RING_RX_DEPTH - 1 commands) */
+        uart1_puts("[M0+ -> M4] WARNING: command NOT written to the RX ring (not initialised by the M4, or full)\r\n");
+    }
     ipcc_m0_send(IPCC_CH_COMMAND);     /* 2. IPCC notify M4 */
     uart1_puts("[M0+ -> M4] Command written to RX ring buffer, IPCC notify sent\r\n");
 }
@@ -484,7 +524,7 @@ static void M0_Display_CW_Signal(const char *beacon_name, const char *callsign, 
 static bool Radio_Send_And_Wait(uint8_t *buffer, uint16_t size, uint32_t timeout_ms) {
     const bool pa5v_on =
         (HAL_GPIO_ReadPin(AMP_5V_EN_PORT, AMP_5V_EN_PIN) == GPIO_PIN_SET) &&
-        (HAL_GPIO_ReadPin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN) == GPIO_PIN_SET);
+        (RBI_Get5VRail() == GPIO_PIN_SET);
     if (!pa5v_on) {
         Satellite_GMSK_Prepare();
     }
@@ -498,8 +538,8 @@ static bool Radio_Send_And_Wait(uint8_t *buffer, uint16_t size, uint32_t timeout
             tx_busy = 0;
             if (!Satellite_GetDCDCHold()) {
                 HAL_GPIO_WritePin(AMP_5V_EN_PORT, AMP_5V_EN_PIN, GPIO_PIN_RESET);
-                HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
-                HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, GPIO_PIN_SET);
+                RBI_Set5VRail(GPIO_PIN_RESET);
+                HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, SAT_PA3V3_IDLE);
                 Satellite_SetRFSwitch(RBI_SWITCH_RX);
             }
             return false;
@@ -511,8 +551,8 @@ static bool Radio_Send_And_Wait(uint8_t *buffer, uint16_t size, uint32_t timeout
     }
     /* Deassert 5V PA (PC3) and 5V DC/DC (PA0); 3.3V PA (PC2) back ON; return RF switch to RX */
     HAL_GPIO_WritePin(AMP_5V_EN_PORT, AMP_5V_EN_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, GPIO_PIN_SET);
+    RBI_Set5VRail(GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, SAT_PA3V3_IDLE);
     Satellite_SetRFSwitch(RBI_SWITCH_RX);
     return true;
 }
@@ -863,6 +903,8 @@ int main(void) {
 
                 /* 2. Handle radio timeout or error */
                 if (rx_timeout_flag || rx_error_flag) {
+                    if (rx_timeout_flag) g_satRx.rx_timeout++;
+                    if (rx_error_flag)   g_satRx.rx_error++;
                     rx_timeout_flag = 0;
                     rx_error_flag = 0;
                     if (!s_cmd_service_active) {
@@ -878,6 +920,7 @@ int main(void) {
                  */
                 if (rx_done_flag) {
                     rx_done_flag = 0;
+                    g_satRx.rx_done++;
 
                     if (s_cmd_service_active) {
                         /* Active command in progress: do not receive any new command */
@@ -889,6 +932,7 @@ int main(void) {
                      * ------------------------------------------------------------- */
                     uint16_t raw_len = rx_frame_size;
                     if (raw_len == 0 || raw_len > sizeof(s_rx_raw)) {
+                        g_satRx.bad_len++;
                         RadioApp_StartRx();
                         break;
                     }
@@ -912,6 +956,7 @@ int main(void) {
                                                              &decoded_len, &was_joined);
 
                     if (!decode_ok) {
+                        g_satRx.decode_fail++;
                         memcpy(s_sat_prev_rx, s_rx_raw, raw_len);
                         s_sat_prev_len = raw_len;
                         uart1_puts(">>> [DECODE FAILED] no valid G3RUH/AX.25 frame (stay in continuous RX) <<<\r\n");
@@ -919,6 +964,7 @@ int main(void) {
                         break;
                     }
 
+                    g_satRx.decode_ok++;
                     s_sat_prev_len = 0;
                     if (was_joined) {
                         uart1_puts(" [DECODE] AX.25 frame recovered by joining previous and current packets!\r\n");
@@ -932,6 +978,7 @@ int main(void) {
                      * DIGIPEATER: a frame with a digipeater path is somebody else's traffic, not a command
                      * ------------------------------------------------------------- */
                     if (Sat_Digi_Handle(s_rx_decoded, decoded_len, HAL_GetTick())) {
+                        g_satRx.digi++;
                         RadioApp_StartRx();
                         break;
                     }
@@ -943,6 +990,7 @@ int main(void) {
                     uart1_puts(">>> [STEP 3: VALIDATE AX.25] Check Headers, Callsigns & FCS/CRC <<<\r\n");
                     const char *why_invalid = "unknown";
                     if (!Sat_Validate_Frame(s_rx_decoded, decoded_len, &why_invalid)) {
+                        g_satRx.validate_fail++;
                         uart1_printf(" [VALIDATE FAILED] Frame rejected: %s\r\n", why_invalid);
                         RadioApp_StartRx();
                         break;
@@ -957,6 +1005,7 @@ int main(void) {
                     uart1_printf("FRAME: DEST=%s SRC=%s\r\n", dest_cs, src_cs);
 
                     if (strcmp(src_cs, SatelliteProfile.sourceCallsign) == 0) {
+                        g_satRx.own_echo++;
                         uart1_puts(" *** COMMAND RECEIVED: NO (source is our own callsign - ignoring echo) ***\r\n");
                         RadioApp_StartRx();
                         break;
@@ -972,6 +1021,7 @@ int main(void) {
                     const uint8_t *pl = &s_rx_decoded[payload_start];
 
                     if (plen == 0) {
+                        g_satRx.empty++;
                         uart1_puts(" *** COMMAND RECEIVED: NO (empty payload, no opcode) ***\r\n");
                         RadioApp_StartRx();
                         break;
@@ -988,6 +1038,7 @@ int main(void) {
                     }
 #if AUTH_ENABLE
                     else {
+                        g_satRx.auth_fail++;
                         uart1_puts(" *** COMMAND RECEIVED: NO (no valid integrity trailer) ***\r\n");
                         RadioApp_StartRx();
                         break;
@@ -1011,6 +1062,7 @@ int main(void) {
 
                     if (!is_telecommand && pl[0] == 0x53) {
                         /* ADDED: a command that starts with the SAT-ID but is not 13 bytes long -> NACK 0xEE 0x04 (incomplete packet) */
+                        g_satRx.incomplete++;
                         uart1_printf(" *** COMMAND RECEIVED: INCOMPLETE (%u B, 13 B needed) -> NACK ***\r\n", plen);
                         s_pending_cmd_len = 0;
                         s_pending_err = SAT_ERR_INCOMPLETE;
@@ -1023,6 +1075,7 @@ int main(void) {
                         break;
                     }
                     if (!is_telecommand) {
+                        g_satRx.not_tc++;
                         uart1_printf(" *** COMMAND RECEIVED: NO (payload of %u B is not a valid telecommand format; only 0x53 commands allowed) ***\r\n", plen);
                         SUBGRF_SetStandby(STDBY_XOSC);
                         RadioApp_StartRx();
@@ -1037,6 +1090,9 @@ int main(void) {
                                  "13B telecommand");
 
                     /* Store pending command and transition to STATE_DOWNLINK */
+                    g_satRx.accepted++;
+                    g_satRx.last_tick = HAL_GetTick();
+                    memcpy((void *)g_satRx.last_cmd, pl, (plen < sizeof(g_satRx.last_cmd)) ? plen : sizeof(g_satRx.last_cmd));
                     memcpy(s_pending_cmd, pl, plen);
                     s_pending_cmd_len = plen;
                     strncpy(s_pending_src_cs, src_cs, sizeof(s_pending_src_cs) - 1);

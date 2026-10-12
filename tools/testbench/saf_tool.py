@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Talk to the store-and-forward digipeater through CPU1 (the Nucleo's ST-Link VCP, OBC link frames).
 
-  tools/.venv/bin/python tools/testbench/saf_tool.py status
-  tools/.venv/bin/python tools/testbench/saf_tool.py list
-  tools/.venv/bin/python tools/testbench/saf_tool.py clear      # empty the journal, then reset CPU2
-  tools/.venv/bin/python tools/testbench/saf_tool.py inject "K1ABC>APRS,ARISS:hello"     # as if heard on 437.375 MHz
+  tools/.venv/bin/python tools/console/saf_tool.py status
+  tools/.venv/bin/python tools/console/saf_tool.py list
+  tools/.venv/bin/python tools/console/saf_tool.py clear      # empty the journal, then reset CPU2
+  tools/.venv/bin/python tools/console/saf_tool.py inject "K1ABC>APRS,ARISS:hello"     # as if heard on 437.375 MHz
 Options: --port /dev/cu.usbmodemXXXX (default: the first one)
 
 inject builds a UI frame from the TNC2 text, hands it to CPU2 through the shared-RAM mailbox and prints what the digipeater

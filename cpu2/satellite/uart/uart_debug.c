@@ -192,8 +192,12 @@ void uart1_init(void)
   GPIOA_AFRH &= ~((0xFUL << 4) | (0xFUL << 8));
   GPIOA_AFRH |=  ((7UL << 4)   | (7UL << 8));
 
+#ifndef SAT_CUBUS
   /*
-   * 3. Also configure PB6 as USART1_TX (AF7)
+   * 3. Also configure PB6 as USART1_TX (AF7) (Nucleo: Arduino D1)
+   *
+   * Not on CUBUS: PB6 is KILL_SWITCH1_- there, a coil drive line of the kill switch. Making it a push-pull alternate function with a
+   * pull-up would put a level on it that nobody asked for. The debug UART is PA9 / PA10 only (DEBUG_TX_COM/OBC, DEBUG_RX_COM/OBC).
    */
   GPIOB_MODER &= ~(3UL << 12);
   GPIOB_MODER |=  (2UL << 12);
@@ -203,6 +207,7 @@ void uart1_init(void)
   GPIOB_PUPDR |=  (1UL << 12);
   GPIOB_AFRL &= ~(0xFUL << 24);
   GPIOB_AFRL |=  (7UL << 24);
+#endif
 
   /*
    * 4. Enable USART1 (APB2 bit 14) and LPUART1 (APB1 bit 0) clocks

@@ -6,9 +6,13 @@ __pycache__/
 .s2s2.config
 generated/
 
-# build outputs
+# build outputs (one folder per CPU2 image: build/satellite/, build/ground_station/)
+/build/
 cpu2/*/build/
 cpu2/*/compile_flags.txt
 tools/.venv/
 tools/ground_software/.session_secret
 tools/ground_software/mission_control.db
+
+# runtime data of the web tools (event history, images, accounts, screenshots)
+data/

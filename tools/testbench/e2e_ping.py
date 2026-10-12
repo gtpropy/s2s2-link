@@ -5,7 +5,7 @@ Sends PING on the GS UART (115200) every --every seconds until the GS prints the
 satellite's ACKs, or --timeout expires. The satellite only listens ~50 s of every
 ~95 s, so a single PING can land in its CW phase and be lost; hence the retries.
 
-  tools/.venv/bin/python tools/testbench/e2e_ping.py [--port /dev/cu.usbserial-AG0L702O]
+  tools/.venv/bin/python tools/console/e2e_ping.py [--port /dev/cu.usbserial-AG0L702O]
 Exit code 0 = got ACK Accepted + PING reply (authenticated downlink decoded), 1 otherwise.
 """
 import argparse

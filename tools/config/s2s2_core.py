@@ -29,11 +29,12 @@ CPU2_RAM_BASE, CPU2_RAM_SIZE = 0x20009000, 28 * 1024
 CPU1_FLASH_SIZE = 0x32000                       # 0x08000000 .. 0x08032000
 HEAP_STACK_RESERVE = 0x200 + 0x400              # _Min_Heap_Size + _Min_Stack_Size
 
+# "bin" / "elf" are relative to the repository root: every image builds into <repo>/build/<image>/ (see cpu2/common/cpu2.mk)
 TARGETS = {
     "sat": {"name": "Satellite", "dir": os.path.join(REPO, "cpu2", "satellite"),
-            "bin": os.path.join("build", "satellite.bin"), "elf": os.path.join("build", "satellite.elf")},
+            "bin": os.path.join("build", "satellite", "satellite.bin"), "elf": os.path.join("build", "satellite", "satellite.elf")},
     "gs": {"name": "Ground station", "dir": os.path.join(REPO, "cpu2", "ground_station"),
-           "bin": os.path.join("build", "ground_station.bin"), "elf": os.path.join("build", "ground_station.elf")},
+           "bin": os.path.join("build", "ground_station", "ground_station.bin"), "elf": os.path.join("build", "ground_station", "ground_station.elf")},
 }
 NUTTX_BIN = os.path.join(REPO, "nuttx", "nuttx.bin")
 
@@ -47,7 +48,7 @@ DEFAULT_CONFIG = {
     # security
     "auth": True,                      # integrity tag + replay counter on short packets (key in generated/secrets.h)
     # build
-    "debug": False, "frontend": "NUCLEO", "log": True, "timer_rtc": False,
+    "debug": False, "frontend": "NUCLEO", "cubus": False, "log": True, "timer_rtc": False,
     # identity
     "project": "S2S2", "sat_call": "9N2SJ", "sat_ssid": 1, "gs_call": "GROUND", "gs_ssid": 0,
     # radio and timing
@@ -102,6 +103,8 @@ def validate_config(cfg):
             errs.append("%s must be %d-%d" % (label, lo, hi))
     if cfg["frontend"] not in FRONTENDS:
         errs.append("front end must be one of %s" % ", ".join(FRONTENDS))
+    if not isinstance(cfg["cubus"], bool):
+        errs.append("CUBUS must be on or off")
     return errs
 
 
@@ -143,7 +146,11 @@ MENUS = {
         _i("bool", "debug", "DEBUG: -Og -g3 instead of -Os", "For stepping with a debugger. The satellite does not fit 56 KB with it."),
         _i("bool", "log", "LOG: satellite console log", "Off removes the log (about 15 KB) but is broken: downlink frames get corrupted (open bug)."),
         _i("bool", "timer_rtc", "RTC-backed UTIL_TIMER tick", "Dormant ST timer layer (about 1.5 KB). Leave off."),
-        _i("choice", "frontend", "Satellite RF front end", "NUCLEO = stock Nucleo-WL55JC (RFO_HP PA). CUSTOM = the reference board (RFO_LP + external 3.3 V / 5 V PAs).",
+        _i("bool", "cubus", "CUBUS: build the satellite for the RSMS CUBUS V.3 flight board",
+           "On: the satellite image uses the CUBUS board profile (ADL5324 PA fed from RFO_LP, 3.3 V for CW / 5 V for GMSK, RF switch FE_CTRL1/2, the 5 V bus rail only "
+           "borrowed on PA0, no Nucleo LEDs on PB15/PB9/PB11, no PB6 UART) and replaces the front end setting below. The ground station is always a Nucleo. "
+           "Same as make CUBUS=T. See docs/CUBUS.md."),
+        _i("choice", "frontend", "Satellite RF front end (ignored with CUBUS)", "NUCLEO = stock Nucleo-WL55JC (RFO_HP PA). CUSTOM = the reference board (RFO_LP + external 3.3 V / 5 V PAs).",
            options=FRONTENDS),
     ]),
     "identity": ("Identity", [
@@ -182,7 +189,7 @@ MENUS = {
     "probes": ("ST-Link probes", [
         _i("probe", "sat_serial", "Satellite probe", "ST-Link that flashes the satellite board."),
         _i("probe", "gs_serial", "Ground station probe", "ST-Link that flashes the ground station board."),
-        _i("action", "rescan", "<Rescan probes>", "Ask st-info for the connected ST-Links."),
+        _i("action", "rescan", "<Rescan probes>", "Read the connected ST-Links from the USB registry (the probes are not opened)."),
     ]),
     "actions": ("Build, flash and tools", [
         _i("action", "build", "<Build the selected targets>", "make in cpu2/satellite and cpu2/ground_station."),
@@ -323,10 +330,11 @@ def render_mk(cfg):
 AUTH             ?= %s
 DEBUG            ?= %s
 FRONTEND         ?= %s
+CUBUS            ?= %s
 LOG              ?= %s
 TIMER_IF_USE_RTC ?= %s
 DIGI             ?= %s
-""" % ("TRUE" if cfg["auth"] else "FALSE", "T" if cfg["debug"] else "F", cfg["frontend"],
+""" % ("TRUE" if cfg["auth"] else "FALSE", "T" if cfg["debug"] else "F", cfg["frontend"], "TRUE" if cfg["cubus"] else "FALSE",
        "1" if cfg["log"] else "0", "1" if cfg["timer_rtc"] else "0", "TRUE" if cfg["digi"] else "FALSE")
 
 
@@ -393,10 +401,29 @@ def parse_probes(text):
     return [p for p in probes if p["serial"]]
 
 
+def parse_ioreg_probes(text):
+    """ST-Link probes from `ioreg -p IOUSB -l -w0` output: [{'serial','version','chip'}] (version / chip are not known without
+    talking to the probe, they stay empty)."""
+    probes, name = [], None
+    for line in text.splitlines():
+        m = re.search(r'"USB Product Name" = "([^"]*)"', line)
+        if m:
+            name = m.group(1)
+            continue
+        m = re.search(r'"USB Serial Number" = "([^"]*)"', line)
+        if m and name is not None:
+            if "stlink" in name.lower().replace("-", "").replace("_", "").replace(" ", "") and m.group(1):
+                probes.append({"serial": m.group(1), "version": "", "chip": ""})
+            name = None
+    return probes
+
+
 def scan_probes():
+    """List the connected ST-Links by reading the USB registry. It never talks to a probe: `st-info --probe` opens every ST-Link and
+    RESETS the board behind it, which is not acceptable with a flight board attached (CUBUS) or in the middle of a test."""
     try:
-        out = subprocess.run(["st-info", "--probe"], capture_output=True, text=True, timeout=15)
-        return parse_probes(out.stdout + out.stderr)
+        out = subprocess.run(["ioreg", "-p", "IOUSB", "-l", "-w0"], capture_output=True, text=True, timeout=15)
+        return parse_ioreg_probes(out.stdout)
     except (OSError, subprocess.TimeoutExpired):
         return []
 
@@ -438,7 +465,7 @@ def top_symbols(elf, count=8):
 
 def target_stats(key):
     t = TARGETS[key]
-    binp, elfp = os.path.join(t["dir"], t["bin"]), os.path.join(t["dir"], t["elf"])
+    binp, elfp = os.path.join(REPO, t["bin"]), os.path.join(REPO, t["elf"])
     st = {"name": t["name"], "built": os.path.exists(binp) and os.path.exists(elfp),
           "bin": t["bin"], "bin_bytes": 0, "sections": {}, "top": [], "age": None}
     if not st["built"]:
@@ -573,19 +600,46 @@ class Runner:
 # --------------------------------------------------------------------------
 # actions (shared by the TUI and --batch)
 # --------------------------------------------------------------------------
-def selected_targets(cfg):
+def selected_targets(cfg, only=None):
+    """Targets to build / flash: the ones switched on in the configuration, or exactly `only` (a list of "sat" / "gs")."""
+    if only:
+        return [k for k in ("sat", "gs") if k in only]
     return [k for k in ("sat", "gs") if cfg["build_" + k]]
 
 
-def build_steps(cfg):
-    return [("Build " + TARGETS[k]["name"], ["make"], TARGETS[k]["dir"])
-            for k in selected_targets(cfg)]
+def parse_bool(v):
+    v = str(v).strip().lower()
+    if v in ("t", "true", "1", "y", "yes", "on"):
+        return True
+    if v in ("f", "false", "0", "n", "no", "off"):
+        return False
+    raise ValueError("expected T or F, got %r" % v)
 
 
-def flash_steps(cfg, with_cpu1=False):
+def cubus_on(cfg, cubus=None):
+    """CUBUS build for the satellite: the command-line override when given (make CUBUS=T), else the configuration."""
+    return bool(cfg["cubus"]) if cubus is None else bool(cubus)
+
+
+def make_args(cfg, k, cubus=None):
+    """Extra `make` arguments of one target. CUBUS only exists for the satellite image; it is passed explicitly only when
+    overridden on the command line (otherwise the generated s2s2.mk carries the saved setting)."""
+    return ["CUBUS=" + ("TRUE" if cubus else "FALSE")] if (k == "sat" and cubus is not None) else []
+
+
+def target_title(cfg, k, cubus=None):
+    return TARGETS[k]["name"] + (" [CUBUS]" if k == "sat" and cubus_on(cfg, cubus) else "")
+
+
+def build_steps(cfg, only=None, cubus=None):
+    return [("Build " + target_title(cfg, k, cubus), ["make"] + make_args(cfg, k, cubus), TARGETS[k]["dir"])
+            for k in selected_targets(cfg, only)]
+
+
+def flash_steps(cfg, with_cpu1=False, only=None, cubus=None):
     steps, problems = [], []
     seen = set()
-    for k in selected_targets(cfg):
+    for k in selected_targets(cfg, only):
         serial = cfg[k + "_serial"]
         if not serial:
             problems.append("%s: no ST-Link selected" % TARGETS[k]["name"])
@@ -593,17 +647,23 @@ def flash_steps(cfg, with_cpu1=False):
         if serial in seen:
             problems.append("%s: same probe as the other target" % TARGETS[k]["name"])
             continue
+        if with_cpu1 and k == "sat" and cubus_on(cfg, cubus):
+            problems.append("CUBUS: the CPU1 (OBC) firmware of the flight board is not flashed from here (flash-all would overwrite it "
+                            "with the Nucleo image store app); use `flash` for the CPU2 radio image")
+            continue
         seen.add(serial)
         d = TARGETS[k]["dir"]
+        extra = make_args(cfg, k, cubus)
+        title = target_title(cfg, k, cubus)
         if with_cpu1:
-            steps.append((TARGETS[k]["name"] + ": flash CPU1 (NuttX)", ["make", "flash-m4", "SERIAL=" + serial], d))
-            steps.append((TARGETS[k]["name"] + ": set CPU2 boot option bytes", ["make", "c2boot", "SERIAL=" + serial], d))
-        steps.append((TARGETS[k]["name"] + ": flash CPU2", ["make", "flash", "SERIAL=" + serial], d))
+            steps.append((title + ": flash CPU1 (NuttX)", ["make", "flash-m4", "SERIAL=" + serial], d))
+            steps.append((title + ": set CPU2 boot option bytes", ["make", "c2boot", "SERIAL=" + serial], d))
+        steps.append((title + ": flash CPU2", ["make", "flash", "SERIAL=" + serial] + extra, d))
     return steps, problems
 
 
-def clean_steps(cfg):
-    return [("Clean " + TARGETS[k]["name"], ["make", "clean"], TARGETS[k]["dir"]) for k in ("sat", "gs")]
+def clean_steps(cfg, only=None):
+    return [("Clean " + TARGETS[k]["name"], ["make", "clean"], TARGETS[k]["dir"]) for k in ("sat", "gs") if not only or k in only]
 
 
 def gen_cli(argv):
@@ -621,17 +681,19 @@ def gen_cli(argv):
     return 0
 
 
-def batch(action):
+def batch(action, only=None, cubus=None):
+    """action: build | flash | flash-all | clean.  only: ["sat"] / ["gs"] / both (default: the targets switched on in the
+    configuration).  cubus: True / False overrides the saved CUBUS option for this run only (make CUBUS=T)."""
     cfg = load_config()
     if action == "build":
-        steps = build_steps(cfg)
+        steps = build_steps(cfg, only, cubus)
     elif action in ("flash", "flash-all"):
-        steps, problems = flash_steps(cfg, with_cpu1=(action == "flash-all"))
+        steps, problems = flash_steps(cfg, with_cpu1=(action == "flash-all"), only=only, cubus=cubus)
         if problems:
             print("; ".join(problems) + "\nRun 'make tui' to pick the ST-Links.")
             return 2
     elif action == "clean":
-        steps = clean_steps(cfg)
+        steps = clean_steps(cfg, only)
     else:
         print("unknown batch action", action)
         return 2
@@ -650,7 +712,7 @@ def batch(action):
     with r.lock:
         for ln in list(r.lines)[shown:]:
             print(ln)
-    for k in selected_targets(cfg):
+    for k in selected_targets(cfg, only):
         print("\n".join(format_stats(target_stats(k))))
     return r.rc or 0
 

@@ -19,6 +19,7 @@ Keys (shown at the bottom):
   python3 tools/config/s2s2_tui.py --memstat          print memory statistics      (make memstat)
   python3 tools/config/s2s2_tui.py --probes           list ST-Link probes          (make probes)
   python3 tools/config/s2s2_tui.py --batch build|flash|flash-all|clean             (make build ...)
+        [--only "sat gs"] [--cubus T|F]   restrict to one image / override the CUBUS option for this run (make flash sat CUBUS=T)
   python3 tools/config/s2s2_tui.py --dump             print config + stats as text
 
 If the interactive mode cannot start (no Textual, terminal too small, an error) the reason is printed and written to
@@ -678,7 +679,16 @@ def main(argv):
             print("%s  %s  %s" % (p["serial"], p["version"], p["chip"]))
         return 0
     if "--batch" in argv:
-        return C.batch(argv[argv.index("--batch") + 1])
+        # make flash sat CUBUS=T  ->  --batch flash --only sat --cubus T   (the Makefile passes these through)
+        def opt(name):
+            return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else None
+        only = opt("--only").split() if opt("--only") else None
+        try:
+            cubus = C.parse_bool(opt("--cubus")) if opt("--cubus") else None
+        except ValueError as e:
+            print("--cubus: %s" % e)
+            return 2
+        return C.batch(argv[argv.index("--batch") + 1], only=only, cubus=cubus)
     return run_interactive()
 
 

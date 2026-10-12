@@ -75,9 +75,7 @@ void RBI_EnablePA(uint8_t enable)
                           AMP_5V_EN_PIN,
                           GPIO_PIN_RESET);
 
-        HAL_GPIO_WritePin(DCDC_5V_EN_PORT,
-                          DCDC_5V_EN_PIN,
-                          GPIO_PIN_RESET);
+        RBI_Set5VRail(GPIO_PIN_RESET);
     }
 }
 
@@ -93,9 +91,7 @@ void RBI_Enable5VDCDC(uint8_t enable)
     (void)enable;   /* no 5 V boost on a Nucleo; PA0 is the user button */
     return;
 #endif
-    HAL_GPIO_WritePin(DCDC_5V_EN_PORT,
-                      DCDC_5V_EN_PIN,
-                      enable ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    RBI_Set5VRail(enable ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
 void RBI_SetTxSwitchConfig(RBI_Switch_TypeDef config)
@@ -117,7 +113,8 @@ int32_t RBI_Init(void)
     RCC->AHB2ENR   |= (RCC_AHB2ENR_GPIOAEN | RCC_AHB2ENR_GPIOCEN);
     RCC->C2AHB2ENR |= (RCC_C2AHB2ENR_GPIOAEN | RCC_C2AHB2ENR_GPIOCEN);
 
-    /* Configure 5V DC/DC Converter Enable (PA0: High = 5V ON, Low = OFF) */
+    /* Configure 5V DC/DC Converter Enable (PA0: High = 5V ON, Low = OFF). On CUBUS PA0 is EN_5V_DC/DC&OCP and CPU2 owns it,
+     * exactly like the reference firmware (GMSK raises it, every end of a downlink drops it). */
     /* CHANGED: GPIO_InitTypeDef + HAL_GPIO_Init -> LL_GPIO_OutputInit (push-pull, no pull, very high speed) */
     LL_GPIO_OutputInit(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN);
 
@@ -125,7 +122,7 @@ int32_t RBI_Init(void)
     LL_GPIO_OutputInit(GPIOC, AMP_3V3_EN_PIN | AMP_5V_EN_PIN | FE_CTRL1_PIN | FE_CTRL2_PIN);
 
     /* Default: All OFF (PA0=0, PC2=0, PC3=0, PC4=0, PC5=0) */
-    HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
+    RBI_Set5VRail(GPIO_PIN_RESET);
     HAL_GPIO_WritePin(GPIOC, AMP_3V3_EN_PIN | AMP_5V_EN_PIN | FE_CTRL1_PIN | FE_CTRL2_PIN, GPIO_PIN_RESET);
 
     return 0;
@@ -134,7 +131,7 @@ int32_t RBI_Init(void)
 int32_t RBI_DeInit(void)
 {
     /* Safe shutdown: deassert all controls */
-    HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
+    RBI_Set5VRail(GPIO_PIN_RESET);
     HAL_GPIO_DeInit(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN);
 
     HAL_GPIO_WritePin(GPIOC, AMP_3V3_EN_PIN | AMP_5V_EN_PIN | FE_CTRL1_PIN | FE_CTRL2_PIN, GPIO_PIN_RESET);
@@ -203,9 +200,9 @@ int32_t RBI_ConfigRFSwitch(RBI_Switch_TypeDef Config)
         HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, GPIO_PIN_RESET);
         for (volatile uint32_t i = 0; i < 12000; i++) { __NOP(); }
 
-        if (HAL_GPIO_ReadPin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN) != GPIO_PIN_SET)
+        if (RBI_Get5VRail() != GPIO_PIN_SET)
         {
-            HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_SET);
+            RBI_Set5VRail(GPIO_PIN_SET);
             for (volatile uint32_t i = 0; i < 240000; i++) { __NOP(); } /* ~20 ms */
         }
 
@@ -229,7 +226,7 @@ int32_t RBI_ConfigRFSwitch(RBI_Switch_TypeDef Config)
          * 5. PA bias & switch settle delay (~200 us)
          */
         s_tx_switch_config = RBI_SWITCH_RFO_LP;
-        HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
+        RBI_Set5VRail(GPIO_PIN_RESET);
         HAL_GPIO_WritePin(AMP_5V_EN_PORT, AMP_5V_EN_PIN, GPIO_PIN_RESET);
 
         HAL_GPIO_WritePin(FE_CTRL1_PORT, FE_CTRL1_PIN, GPIO_PIN_RESET);
@@ -265,9 +262,9 @@ int32_t RBI_ConfigRFSwitch(RBI_Switch_TypeDef Config)
             break;
         }
         HAL_GPIO_WritePin(AMP_5V_EN_PORT, AMP_5V_EN_PIN, GPIO_PIN_RESET);
-        HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
+        RBI_Set5VRail(GPIO_PIN_RESET);
         HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN,
-                          s_pa_enabled ? GPIO_PIN_SET : GPIO_PIN_RESET);
+                          s_pa_enabled ? SAT_PA3V3_IDLE : GPIO_PIN_RESET);
         HAL_GPIO_WritePin(FE_CTRL1_PORT, FE_CTRL1_PIN, GPIO_PIN_SET);
         HAL_GPIO_WritePin(FE_CTRL2_PORT, FE_CTRL2_PIN, GPIO_PIN_RESET);
 
@@ -281,7 +278,7 @@ int32_t RBI_ConfigRFSwitch(RBI_Switch_TypeDef Config)
          * STANDBY / OFF:
          * Deassert 5V DC/DC, 5V PA, 3.3V PA, and both RF switch control pins
          */
-        HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
+        RBI_Set5VRail(GPIO_PIN_RESET);
         HAL_GPIO_WritePin(AMP_5V_EN_PORT, AMP_5V_EN_PIN, GPIO_PIN_RESET);
         HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, GPIO_PIN_RESET);
         HAL_GPIO_WritePin(GPIOC, FE_CTRL1_PIN | FE_CTRL2_PIN, GPIO_PIN_RESET);

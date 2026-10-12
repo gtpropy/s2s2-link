@@ -1,0 +1,16 @@
+/* widgets shared by the web tools (Metric, Spark, attitude Cube) */
+.big{font-size:30px;font-weight:700;line-height:1.1}
+.unit{font-size:14px;color:var(--dim);margin-left:4px;font-weight:500}
+.metric{display:flex;flex-direction:column;gap:2px;padding:8px 10px;background:var(--panel2);border-radius:10px;border:1px solid transparent}
+.metric.warn{border-color:var(--warn)}
+.metric.bad{border-color:var(--bad)}
+.metric small{color:var(--dim);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
+.metrics{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.stage{perspective:900px;height:300px;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 40%,var(--panel2),var(--panel));border-radius:12px;position:relative;overflow:hidden}
+.scene{transform-style:preserve-3d;width:0;height:0}
+.cube{position:absolute;width:100px;height:100px;left:-50px;top:-50px;transform-style:preserve-3d;transition:transform .8s cubic-bezier(.2,.8,.2,1)}
+.face{position:absolute;width:100px;height:100px;display:flex;align-items:center;justify-content:center;font:700 16px ui-monospace,monospace;border:2px solid var(--acc);background:rgba(77,163,255,.14);color:var(--fg);backface-visibility:hidden}
+.axis{position:absolute;left:0;top:0;transform-style:preserve-3d}
+.bfield{position:absolute;left:-1px;top:-150px;width:3px;height:300px;background:linear-gradient(var(--warn),transparent);}
+.bfield:before{content:"B";position:absolute;top:-18px;left:-4px;color:var(--warn);font:700 13px sans-serif}
+.spark{width:100%;height:46px;display:block}

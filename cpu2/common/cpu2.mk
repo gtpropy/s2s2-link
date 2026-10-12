@@ -2,21 +2,24 @@
 # cpu2/common/cpu2.mk -- shared build rules of the two CPU2 (Cortex-M0+) images
 #
 # Included by cpu2/satellite/Makefile and cpu2/ground_station/Makefile, which set
-#   TARGET          output name (build/<TARGET>.bin)
+#   TARGET          output name; the build goes to <repo>/build/<TARGET>/ (<TARGET>.bin/.elf/.map, objects, .opts)
 #   TARGET_NAME     human readable name for the banner
 #   TARGET_SRCS     sources of the image's own app/ directory (and anything else target specific)
 #   TARGET_DEFINES  extra -D flags
-#   TARGET_OPTS     option string that forces a clean rebuild when it changes (see build/.opts)
+#   TARGET_OPTS     option string that forces a clean rebuild when it changes (see build/<TARGET>/.opts)
 #
 # Targets: all (default) | flash | size | clean | probes | c2boot | flash-m4 | compile_flags
 # Options come from the generated .mk of the configuration (make configure, TUI), command line wins:
-#   AUTH=TRUE|FALSE  DEBUG=T|F  FRONTEND=NUCLEO|CUSTOM (satellite)  LOG=1|0 (satellite)  DIGI=TRUE|FALSE (satellite)
+#   AUTH=TRUE|FALSE  DEBUG=T|F  FRONTEND=NUCLEO|CUSTOM (satellite)  CUBUS=T|F (satellite: the RSMS CUBUS V.3 flight board)  LOG=1|0 (satellite)  DIGI=TRUE|FALSE (satellite)
 #   TIMER_IF_USE_RTC=0|1  SERIAL=<probe>
 # ============================================================================
 
 COMMON  := ../common
 REPO    := ../..
-BUILD   := build
+# ST-generated / imported headers (CMSIS, HAL, ST radio + utilities, board glue) live in <repo>/include/<group>/ ; our own headers stay next to the sources
+INC     := $(REPO)/include
+# every object and output of an image: <repo>/build/satellite/ or <repo>/build/ground_station/
+BUILD   := $(REPO)/build/$(TARGET)
 
 # stray CPATH/C_INCLUDE_PATH (e.g. from a Python framework install) breaks the ARM toolchain's own header lookup
 unexport CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH OBJC_INCLUDE_PATH
@@ -75,6 +78,25 @@ endif
 FRONTEND ?= NUCLEO
 ifeq ($(FRONTEND),NUCLEO)
   FRONTEND_DEFINE = -DSAT_NUCLEO_FRONTEND=1
+endif
+
+# CUBUS=T: build the satellite for the real flight board, RSMS CUBUS V.3 (COM + OBC + EPS bus board, schematic "RSMS CUBUS V.3 COM SCH").
+# It selects the CUBUS board profile: RFO_LP -> ADL5324 PA (3.3 V for CW, 5 V for GMSK), RF switch FE_CTRL1/2, the 5 V rail (PA0) owned by CPU2 as in the reference,
+# no Nucleo LEDs (PB15/PB9/PB11 are SPI lines there), no PB6 UART (kill switch line). CUBUS=T replaces FRONTEND. Satellite image only; the ground
+# station is always a Nucleo. Details: docs/CUBUS.md.
+CUBUS ?= F
+CUBUS_ON := 0
+ifeq ($(TARGET),satellite)
+  ifneq ($(filter T t 1 Y y YES yes TRUE true,$(CUBUS)),)
+    CUBUS_ON := 1
+    ifneq ($(FRONTEND),CUBUS)
+      ifneq ($(origin FRONTEND),file)
+        $(warning CUBUS=T replaces FRONTEND=$(FRONTEND))
+      endif
+    endif
+    override FRONTEND := CUBUS
+    FRONTEND_DEFINE = -DSAT_CUBUS=1
+  endif
 endif
 
 # LOG=1 (default): full satellite console log. LOG=0 compiles it out but is NOT usable yet (open bug: downlink corrupted)
@@ -159,7 +181,7 @@ ifeq ($(AUTH_EFFECTIVE),TRUE)
   S_SRCS += $(COMMON)/protocol/seal_tag.S
 endif
 
-# object of a source: ../common/x/y.c -> build/common/x/y.o ; app/z.c -> build/app/z.o
+# object of a source: ../common/x/y.c -> $(BUILD)/common/x/y.o ; app/z.c -> $(BUILD)/app/z.o
 objof = $(addprefix $(BUILD)/,$(patsubst ../%,%,$(addsuffix .o,$(basename $(1)))))
 ALL_OBJS = $(call objof,$(C_SRCS) $(S_SRCS))
 
@@ -167,14 +189,12 @@ ALL_OBJS = $(call objof,$(C_SRCS) $(S_SRCS))
 # flags
 # ---------------------------------------------------------------------------
 INCLUDES = \
-	-I. -Iapp -Imission -Iboard -Isystem -Iradio -Iuart -Iipc -I$(GEN_DIR) \
+	-I. -Iapp -Imission -Iboard -Isystem -Iradio -Iuart -Iipc -I$(INC)/$(TARGET) -I$(GEN_DIR) \
 	-I$(COMMON) -I$(COMMON)/protocol -I$(COMMON)/protocol/ax25 -I$(COMMON)/protocol/g3ruh \
 	-I$(COMMON)/system/include -I$(COMMON)/system -I$(COMMON)/digipeater \
-	-I$(COMMON)/vendor/st_radio \
-	-I$(COMMON)/vendor/stm32wlxx_hal -I$(COMMON)/vendor/stm32wlxx_hal/Inc \
-	-I$(COMMON)/drivers/subghz -I$(COMMON)/drivers/bsp -I$(COMMON)/ipc \
-	-I$(COMMON)/vendor/st_utilities \
-	-I$(COMMON)/vendor/cmsis/Device/ST/STM32WLxx/Include -I$(COMMON)/vendor/cmsis/Core/Include
+	-I$(INC)/st_system -I$(INC)/st_radio -I$(INC)/stm32wlxx_hal -I$(INC)/st_bsp -I$(COMMON)/ipc \
+	-I$(INC)/st_utilities \
+	-I$(INC)/cmsis/Device/ST/STM32WLxx/Include -I$(INC)/cmsis/Core/Include
 
 CFLAGS = $(CPU) $(OPT_FLAGS) $(AUTH_DEFINE) -DTIMER_IF_USE_RTC=$(TIMER_IF_USE_RTC) -DDIGI_ENABLE=$(DIGI_ON) $(TARGET_DEFINES) $(FRONTEND_DEFINE) $(LOG_DEFINE) \
 	-MMD -MP -Wall -Wextra -g -fdata-sections -ffunction-sections \
@@ -200,6 +220,7 @@ $(BUILD)/$(TARGET).bin: $(BUILD)/$(TARGET).elf
 	@echo " BIN : $(BUILD)/$(TARGET).bin"
 	@echo " MAP : $(BUILD)/$(TARGET).map"
 	@echo " Flash address: 0x08032000"
+	@$(if $(filter satellite,$(TARGET)),echo " Board        : $(if $(filter 1,$(CUBUS_ON)),RSMS CUBUS V.3 (CUBUS=T),$(FRONTEND) front end)",true)
 	@echo "========================================"
 	@$(MEMORY_SUMMARY)
 
@@ -224,7 +245,7 @@ endef
 size: $(BUILD)/$(TARGET).elf
 	@$(MEMORY_SUMMARY)
 
-# local sources -> build/<dir>/x.o ; common sources -> build/common/<dir>/x.o
+# local sources -> $(BUILD)/<dir>/x.o ; common sources -> $(BUILD)/common/<dir>/x.o
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -275,9 +296,10 @@ flash: $(BIN)
 # ---------------------------------------------------------------------------
 NUTTX_BIN ?= $(REPO)/nuttx/nuttx.bin
 
+# read from the USB registry: `st-info --probe` would open every ST-Link and reset the board behind it
 probes:
-	@echo "Connected ST-Link probes (st-info):"
-	@st-info --probe 2>&1 || echo "  (st-info not found or no probes detected)"
+	@echo "Connected ST-Link probes (USB registry):"
+	@python3 $(REPO)/tools/config/s2s2_tui.py --probes
 
 # CPU2 boot vector: C2OPT=1 (flash) and SBRV=0xC800 -> 0x08032000
 c2boot:

@@ -8,7 +8,7 @@ then looks for the source file's bytes in it. LittleFS interleaves block-pointer
 so a chunk that straddles a block boundary will not appear contiguously; the check therefore looks up
 a 32-byte window from the middle of every 128-byte chunk and reports how many were found.
 
-Run it while the Nucleo is idle (the bench must not hold the ST-Link: close or stop the test first).
+The same check is the testbench test "LittleFS proof" (Tests page). Run either while the Nucleo is idle (only one tool may hold the ST-Link).
 """
 import argparse
 import glob
@@ -25,7 +25,7 @@ BASE, PAGES, PAGE = 0x08024000, 28, 2048
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("target", nargs="?")
-    ap.add_argument("--probe", default="002E00354741500120383733")
+    ap.add_argument("--probe", default="002D001B4741500920383733")
     a = ap.parse_args()
     t = a.target or sorted(glob.glob(os.path.join(ROOT, "docs", "reports", "*/")))[-1]
     if os.path.isdir(t):

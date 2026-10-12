@@ -224,6 +224,34 @@ void               RBI_Enable5VDCDC(uint8_t enable);
 void               RBI_SetTxSwitchConfig(RBI_Switch_TypeDef config);
 RBI_Switch_TypeDef RBI_GetTxSwitchConfig(void);
 
+/*
+ * ADDED: access to the 5 V rail enable (PA0) in one place. A plain GPIO write on every board, CUBUS included: on CUBUS PA0 is EN_5V_DC/DC&OCP and
+ * CPU2 owns it as in the reference firmware (raised for GMSK, dropped when the downlink ends). See docs/CUBUS.md.
+ */
+#define RBI_Set5VRail(state)  HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, (state))
+#define RBI_Get5VRail()       HAL_GPIO_ReadPin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN)
+
+/* State of the 3.3 V PA enable (PC2) between transmissions. The reference firmware leaves the 3.3 V PA energised the whole time (SET).
+ * On CUBUS PC2 gates the ADL5324's supply (AMP_VIN) from the bus, so idle = off: no quiescent current in RX, nothing amplified. The CW beacon
+ * and GMSK sequences switch it on themselves when they need it. */
+#ifdef SAT_CUBUS
+#define SAT_PA3V3_IDLE  GPIO_PIN_RESET
+#else
+#define SAT_PA3V3_IDLE  GPIO_PIN_SET
+#endif
+
+/* Board identification: BOARD_NAME is printed at boot, g_boardId (0xB0A2Dxxx) can be read over SWD to see what is flashed. */
+#ifdef SAT_CUBUS
+#define BOARD_NAME   "RSMS CUBUS V.3"
+#define BOARD_ID     0xB0A2D003UL
+#elif defined(SAT_NUCLEO_FRONTEND)
+#define BOARD_NAME   "Nucleo-WL55JC"
+#define BOARD_ID     0xB0A2D001UL
+#else
+#define BOARD_NAME   "custom front end (reference board)"
+#define BOARD_ID     0xB0A2D002UL
+#endif
+
 /* USER CODE BEGIN EFP */
 
 /* USER CODE END EFP */

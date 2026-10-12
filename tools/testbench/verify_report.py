@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Independent check of a docs/reports/<time>/ folder. Does NOT use the bench code.
 
-  tools/.venv/bin/python tools/testbench/verify_report.py [docs/reports/<time>]   (default: newest)
+  tools/.venv/bin/python tools/console/verify_report.py [docs/reports/<time>]   (default: newest)
 
 It re-derives everything from the raw files:
   * SHA-256 of source.* and received.*  (and a byte compare)

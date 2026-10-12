@@ -1,0 +1,9 @@
+{"title": "Ground station <-> satellite: HK request, ACKs, housekeeping packet, invalid opcode",
+ "steps": [
+  {"do": "expect", "event": "ack", "what": "accepted", "resend": "HK1", "every_s": 14, "tries": 8, "within_s": 120, "name": "HK1 is accepted"},
+  {"do": "expect", "event": "hk", "within_s": 40, "name": "housekeeping packet arrives"},
+  {"do": "expect", "event": "ack", "what": "completed", "within_s": 40, "name": "ACK completed", "continue": true},
+  {"do": "wait", "s": 4},
+  {"do": "expect", "event": "nack", "resend": "HEX 53 01 FF FF FF 00 00 00 00 00 00 00 00", "every_s": 14, "tries": 8, "within_s": 120, "name": "invalid opcode is refused"},
+  {"do": "screenshot", "route": "dashboard", "note": "after the link check"},
+  {"do": "report", "note": "link check"}]}

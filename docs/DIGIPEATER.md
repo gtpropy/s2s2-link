@@ -11,7 +11,7 @@ policy are ordinary C running on the microcontroller (the GMSK modem itself is t
 | Store-and-forward memory (hop budget, schedule, TTL) | `cpu2/common/digipeater/saf.{h,c}` |
 | Journal in CPU1 flash + mailbox | `apps/examples/s2s2obc/s2s2obc_saf.c`, `cpu2/satellite/ipc/saf_shared.h` |
 | PC tool (status, list, inject a frame) | `tools/testbench/saf_tool.py` |
-| Test bench page "Digipeater + store and forward" | `tools/testbench/server.py` (`test_digi`, `/api/digi/*`), `index.html` |
+| Test bench page "Digipeater + store and forward" | `tools/testbench/tb/tests_digi.py` (`test_digi`), `tb/web.py` (`/api/digi/*`), page Digipeater |
 | Re-framing of a received frame | `Protocol_CreateRawPacket()` in `mission/protocol.c` |
 | Ground-station test traffic | console command `DIGI SRC>DEST,VIA:text` |
 | Settings | TUI / `.s2s2.config` -> `generated/s2s2_config.h` (`S2S2_DIGI_*`) |

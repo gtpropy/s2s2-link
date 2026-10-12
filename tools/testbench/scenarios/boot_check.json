@@ -1,0 +1,9 @@
+{"title": "Boot and firmware check of both boards (SWD only, no radio)",
+ "steps": [
+  {"do": "test", "name": "membudget", "cfg": {"target": "sat"}, "continue": true},
+  {"do": "test", "name": "fwcheck", "cfg": {"target": "sat"}, "continue": true},
+  {"do": "test", "name": "bootcfg", "cfg": {"target": "sat"}, "continue": true},
+  {"do": "test", "name": "fwcheck", "cfg": {"target": "gs"}, "continue": true},
+  {"do": "test", "name": "bootcfg", "cfg": {"target": "gs"}, "continue": true},
+  {"do": "screenshot", "route": "profiler", "note": "after the boot check"},
+  {"do": "report", "note": "boot check"}]}

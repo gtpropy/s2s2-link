@@ -31,6 +31,9 @@
  * ============================================================================
  */
 
+/* ADDED: which board this image was built for (BOARD_ID in board/radio_board_if.h), readable over SWD. */
+volatile uint32_t g_boardId = BOARD_ID;
+
 const SatelliteConfig_t SatelliteDefaultConfig = SATELLITE_CONFIG_DEFAULT;
 static SatelliteConfig_t s_config = SATELLITE_CONFIG_DEFAULT;
 
@@ -77,9 +80,9 @@ static void Satellite_GMSK_Stop(void)
     /* CHANGED: the 10 ms / 20 ms power-down waits are now SAT_PA_OFF_MS (x2) from Mission/config.h:
      * unchanged on FRONTEND=CUSTOM, 0 on a Nucleo (no 5 V boost rail to discharge). */
     CPU2_Delay_Ms(SAT_PA_OFF_MS);
-    HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
+    RBI_Set5VRail(GPIO_PIN_RESET);
     CPU2_Delay_Ms(SAT_PA_OFF_MS * 2U);
-    HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, SAT_PA3V3_IDLE);
     Satellite_SetRFSwitch(RBI_SWITCH_RX);
 }
 
@@ -378,9 +381,9 @@ void Satellite_CW_Finish(void) {
     SUBGRF_SetStandby(STDBY_RC);
     Radio.Standby();
     /* Deassert 5V DC/DC; 5V PA OFF (PC3=0); 3.3V PA OFF in RX (PC2=0); switch RF to RX */
-    HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
+    RBI_Set5VRail(GPIO_PIN_RESET);
     HAL_GPIO_WritePin(AMP_5V_EN_PORT, AMP_5V_EN_PIN, GPIO_PIN_RESET);   /* PC3 = 0 (5V PA OFF) */
-    HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, GPIO_PIN_SET);   /* PC2 = 1 (3.3V PA stays ON) */
+    HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, SAT_PA3V3_IDLE);   /* PC2 = 1 (3.3V PA stays ON) */
     Satellite_SetRFSwitch(RBI_SWITCH_RX);
     SUBGRF_SetDioIrqParams(IRQ_RADIO_NONE, IRQ_RADIO_NONE, IRQ_RADIO_NONE, IRQ_RADIO_NONE);
     SUBGRF_ClearIrqStatus(IRQ_RADIO_ALL);
@@ -451,8 +454,8 @@ void Satellite_CW_Abort_To_Rx(void) {
     s_cw_cfg_valid = false;
     Satellite_CW_CarrierOff();
     HAL_GPIO_WritePin(AMP_5V_EN_PORT, AMP_5V_EN_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, GPIO_PIN_SET);   /* 3.3V PA back ON */
+    RBI_Set5VRail(GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, SAT_PA3V3_IDLE);   /* 3.3V PA back ON */
     Satellite_SetRFSwitch(RBI_SWITCH_RX);
     /* Immediately keep radio armed in RX mode with IRQs enabled to capture full burst */
     RadioApp_StartRx();
@@ -543,8 +546,8 @@ void Satellite_Hold_Continuous_Carrier_5V(uint32_t seconds) {
 
     /* Power down 5V PA PC3, 5V DC/DC PA0, restore 3.3V PA (always enabled) and RF switch to RX */
     HAL_GPIO_WritePin(AMP_5V_EN_PORT, AMP_5V_EN_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, GPIO_PIN_SET);   /* 3.3V PA back ON */
+    RBI_Set5VRail(GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, SAT_PA3V3_IDLE);   /* 3.3V PA back ON */
     Satellite_SetRFSwitch(RBI_SWITCH_RX);
     SUBGRF_SetDioIrqParams(IRQ_RADIO_NONE, IRQ_RADIO_NONE, IRQ_RADIO_NONE, IRQ_RADIO_NONE);
     SUBGRF_ClearIrqStatus(IRQ_RADIO_ALL);
@@ -741,7 +744,7 @@ void Satellite_Init(const SatelliteConfig_t *config) {
     /* External PAs initially OFF to minimize idle current */
     HAL_GPIO_WritePin(AMP_3V3_EN_PORT, AMP_3V3_EN_PIN, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(AMP_5V_EN_PORT, AMP_5V_EN_PIN, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN, GPIO_PIN_RESET);
+    RBI_Set5VRail(GPIO_PIN_RESET);
     uart1_puts("[INIT] 4. RF Dual-PA & 5V DC/DC Configured (JC1 Low Power Mode) ... [OK]\r\n");
     uart1_puts("       - CW Mode   : 3.3V External PA (PC2/SO2)  | 5V DC/DC (PA0): OFF\r\n");
     uart1_puts("       - GMSK Mode : 5V External PA (PC3/SI2)    | 5V DC/DC (PA0): ENABLED FOR TX\r\n");
@@ -780,6 +783,7 @@ void Satellite_Init(const SatelliteConfig_t *config) {
     uart1_puts("                              2) GMSK AX.25 UI Frame + G3RUH\r\n");
     uart1_puts("======================================================================\r\n");
     uart1_puts("[INIT COMPLETE] Satellite Application Ready.\r\n");
+    uart1_printf("[BOARD] %s (id 0x%08lX)\r\n", BOARD_NAME, (unsigned long)g_boardId);
     /* Run the self-test OUTSIDE the print call: with LOG=0 uart1_printf() is a macro that expands to
      * ((void)0), so its arguments are never evaluated. Calling Seal_SelfTest() inside the argument
      * list meant the test (and the g_sealSelfTest result word) silently vanished from LOG=0 builds. */
@@ -961,7 +965,7 @@ void Satellite_GMSK_Prepare(void) {
 
     const bool pa5v_already_on =
         (HAL_GPIO_ReadPin(AMP_5V_EN_PORT, AMP_5V_EN_PIN) == GPIO_PIN_SET) &&
-        (HAL_GPIO_ReadPin(DCDC_5V_EN_PORT, DCDC_5V_EN_PIN) == GPIO_PIN_SET);
+        (RBI_Get5VRail() == GPIO_PIN_SET);
 
     /* Already biased for this downlink session: do not re-toggle switch/PA. */
     if (pa5v_already_on) {
@@ -1407,6 +1411,28 @@ void Satellite_Send_HK_Combined_Packet(const int16_t b1[5], const int16_t b2[5])
     uint8_t  pkt[HK_PKT_LEN]; /* HK_PKT_LEN = 128U */
     memset(pkt, 0, sizeof(pkt));
 
+#ifdef SAT_CUBUS
+    /* CUBUS: only what the OBC (CPU1, apps/examples/OBC_main) really sends is reported; no channel is invented. Beacon 1 carries
+     * batt V, solar V, antenna T, batt T, BPB T; beacon 2 carries 3V3 I, total solar I, batt I and two OBC flags. Gyro and magnetometer
+     * are not delivered to CPU2 at all, so the IMU words stay 0 (they used to be filled from the two flag words and constants).
+     * The HK format has no slot for the total solar current: it is in CW beacon 1 only. Everything else stays 0 = "not measured". */
+    int16_t *adc1 = (int16_t *)&pkt[0];
+    adc1[0]  = b1[0];                                /* Bat Voltage x100 */
+    adc1[1]  = b1[1];                                /* Solar Voltage x100 */
+    adc1[8]  = b1[2];                                /* Antenna temperature x10 */
+    adc1[9]  = b1[3];                                /* Battery temperature x10 */
+    adc1[10] = b1[4];                                /* BPB temperature x10 */
+
+    /* Footer 1: 0x55, 0xAA (0xAA55 little-endian) at Bytes 32..33 */
+    pkt[32] = 0x55;
+    pkt[33] = 0xAA;
+
+    int16_t *adc2 = (int16_t *)&pkt[34];
+    adc2[1]  = b2[0];                                /* 3.3 V main current x100 */
+    adc2[3]  = b2[2];                                /* Battery current x100 */
+    adc2[10] = b2[3];                                /* Status Flag 1 (as the OBC sends it) */
+    adc2[11] = b2[4];                                /* Status Flag 2 (as the OBC sends it) */
+#else
     /* --- ADC1: 16 Channels (Voltages & Signed Temperatures, Bytes 0..31) --- */
     int16_t *adc1 = (int16_t *)&pkt[0];
     adc1[0]  = (b1[0] != 0) ? b1[0] : (int16_t)385;  /* Bat Voltage  3.85V x100 */
@@ -1453,6 +1479,8 @@ void Satellite_Send_HK_Combined_Packet(const int16_t b1[5], const int16_t b2[5])
     imu[3]  = (int16_t)320;                          /* Mag X: +320 uT (signed) */
     imu[4]  = (int16_t)110;                          /* Mag Y: +110 uT (signed) */
     imu[5]  = (int16_t)-450;                         /* Mag Z: -450 uT (signed) */
+
+#endif /* SAT_CUBUS */
 
     /* Footer 2: 0x66, 0xBB (0xBB66 little-endian) at Bytes 70..71 */
     pkt[70] = 0x66;
@@ -1592,6 +1620,13 @@ void Satellite_Handle_Flash_Read(
             }
             uart1_puts("[M0+ FLASH] IPC timeout waiting for M4 chunk\r\n");
         }
+
+#ifdef SAT_CUBUS
+        /* CUBUS: the OBC did not deliver the chunk. Report that (status 1 = flash read error, no data) and stop; never send made-up records. */
+        memset(stub, 0, FLASH_DATA_LEN);
+        Satellite_Send_Flash_Chunk(p, num_pkts, this_addr, 1U, stub);
+        break;
+#endif
 
         /* Pack structured HEX payload containing ADC1 + ADC2 with IMU between header and footer */
         memset(stub, 0, FLASH_DATA_LEN);

@@ -26,6 +26,8 @@ typedef struct
  * One HDLC-level bit in -> NRZI -> G3RUH scramble -> packed into the output.
  * Streaming: no intermediate one-byte-per-bit arrays.
  */
+
+
 static bool BitWriter_Put(
     BitWriter *w,
     uint8_t bit)

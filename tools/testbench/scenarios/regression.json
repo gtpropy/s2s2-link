@@ -1,0 +1,11 @@
+{"title": "Regression: boot check, Nucleo robustness, every command, beacon timing (needs both boards)",
+ "steps": [
+  {"do": "test", "name": "membudget", "cfg": {"target": "sat"}, "continue": true},
+  {"do": "test", "name": "fwcheck", "cfg": {"target": "sat"}, "continue": true},
+  {"do": "test", "name": "bootcfg", "cfg": {"target": "sat"}, "continue": true},
+  {"do": "obc", "cmd": "STATUS", "expect_status": 0, "name": "CPU1 up, CPU2 heartbeat advancing"},
+  {"do": "test", "name": "vcpfuzz", "continue": true},
+  {"do": "test", "name": "cmdconf", "continue": true},
+  {"do": "test", "name": "beacontime", "cfg": {"seconds": 360}, "continue": true},
+  {"do": "screenshot", "route": "dashboard"},
+  {"do": "report", "note": "regression"}]}

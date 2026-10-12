@@ -2,7 +2,7 @@
  * ADDED: status LEDs for the image-transfer proof. CPU2 owns the yellow (green+red) "transmitting" state;
  * CPU1 (NuttX app s2s2obc) drives blue = writing its flash and green = reading it. Both cores write the
  * same GPIOB pins with BSRR (atomic set/reset), so they do not need to lock against each other.
- * The bench samples GPIOB->ODR over SWD (tools/testbench LedTrace) to prove the colours really happened.
+ * The bench samples GPIOB->ODR over SWD (tools/console LedTrace) to prove the colours really happened.
  */
 #include "obc_led.h"
 #include "stm32wlxx.h"
@@ -13,6 +13,14 @@
 #define LED_G   (1UL << 9)
 #define LED_R   (1UL << 11)
 
+#ifdef SAT_CUBUS
+/*
+ * CUBUS has no LEDs on these pins: PB15 = ADC_MOSI, PB9 = CS_MPU (gyro chip select), PB11 = CS_MAG (magnetometer chip select). They
+ * belong to CPU1's SPI buses, so CPU2 must not configure or toggle them. The functions stay (the call sites are unchanged) and do nothing.
+ */
+void Obc_Led(uint8_t mask)  { (void)mask; }
+void Obc_Led_Tick(void)     { }
+#else
 static uint32_t s_led_last;
 static uint8_t  s_led_init;
 
@@ -50,4 +58,4 @@ void Obc_Led_Tick(void)
         GPIOB->BSRR = (LED_B | LED_G | LED_R) << 16;
     }
 }
-
+#endif /* SAT_CUBUS */

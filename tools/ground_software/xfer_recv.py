@@ -2,7 +2,7 @@
 """
 xfer_recv.py -- receive a file sent with xfer_send.py, from Direwolf's KISS port.
 
-Direwolf (tools/testbench/direwolf_s2s2_4800.conf) decodes the 4800 bps G3RUH downlink
+Direwolf (tools/console/direwolf_s2s2_4800.conf) decodes the 4800 bps G3RUH downlink
 from the SDR and exposes frames on KISSPORT 8001. This script reads them,
 keeps the transfer fragments, writes the file once every fragment is in.
 
