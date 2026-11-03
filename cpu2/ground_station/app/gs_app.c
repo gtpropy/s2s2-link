@@ -190,14 +190,22 @@ static const uint8_t CMD_HK1[13]  = { 0x53, 0x01, 0x1D, 0xD1, 0xF2, 0x00, 0xF2,
                                        0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
 static const uint8_t CMD_HK2[13]  = { 0x53, 0x01, 0x1D, 0xD1, 0xF8, 0x00, 0xF8,   /* CHANGED: housekeeping download (D2 F2 is not in the sheet) */
                                        0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
-static const uint8_t CMD_PING[13] = { 0x53, MCU_ID_OBC, 0x1D, 0xD1, 0xF2, 0x00, 0xF2,   /* CHANGED: no ping in the sheet; HEALTH SAT gets ACK + HK + ACK */
+static const uint8_t CMD_PING[13] = { 0x53, MCU_ID_OBC, 0x1D, 0xD1, 0xF5, 0x00, 0x00,   /* ping, as the reference firmware: ACK, "ACK: PING OK (OBC_ONLINE)", ACK */
                                        0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
 /* ADDED: antenna deployment, 53 01 DE EF AA + 8 x 00 (Sheet 3) */
 static const uint8_t CMD_ANTENNA[13] = { 0x53, 0x01, 0xDE, 0xEF, 0xAA, 0, 0, 0, 0, 0, 0, 0, 0 };
 static const uint8_t CMD_CAMON[13]   = CMD_CAM_ON_COMMAND;
 static const uint8_t CMD_CAMDOWN[13] = CMD_CAM_DOWNLOAD_COMMAND;
-static const uint8_t CMD_ADCS[13]    = CMD_ADCD_COMMAND;
-static const uint8_t CMD_EPDM[13]    = CMD_EPDM_COMMAND;
+/* ADCS / EPDM mission run commands of the reference firmware (github.com/PrmBRana/dummy-camera-live Ground_Station/Mission/config.h):
+ * MCU 03 = ADCS, MCU 05 = EPDM (earthquake precursor detection mission). The satellite answers ACK accepted + ACK completed (no data packet). */
+static const uint8_t CMD_ADCS[13] = { 0x53, 0x03, 0xA0, 0x53, 0xCF, 0, 0, 0, 0, 0, 0, 0, 0 };
+static const uint8_t CMD_EPDM[13] = { 0x53, 0x05, 0xEC, 0xCF, 0xCF, 0, 0, 0, 0, 0, 0, 0, 0 };
+/* Files of the Packet Format file table (download = 53 01 1D <directory> <file no> <data id 00 Fn> <address> <packets>).
+ * Optional argument: number of 128-byte chunks (default 5). ADCSFILE / EPDMFILE read adcs.txt / epdm.txt, the results of the missions. */
+static const struct { const char *cmd, *file; uint8_t dir, no; } GS_FILES[] = {
+    { "FLAGS", "flags.txt", 0xD1, 0xF1 }, { "SATLOG", "sat_log.txt", 0xD1, 0xF3 }, { "RSVTABLE", "rsv_table.txt", 0xD1, 0xF4 },
+    { "EPDMFILE", "epdm.txt", 0xD2, 0xF6 }, { "ADCSFILE", "adcs.txt", 0xD2, 0xF7 },
+};
 
 static uint8_t s_tx_frame[AX25_MAX_FRAME_SIZE];
 static uint8_t s_hex_buf[AX25_MAX_FRAME_SIZE];
@@ -487,13 +495,20 @@ static void Print_AX25_Fields(const char *label, const uint8_t *buf, uint16_t le
  * Bytes 124..125: CRC-16
  * Bytes 126..127: end footer 0xAA 0xCC
  * ========================================================================== */
-static void GS_Display_HK_Packet(const uint8_t *pkt, uint16_t plen)
+static void GS_Display_HK_Packet(const uint8_t *pkt_in, uint16_t plen)
 {
     if (plen < GS_HK_PKT_LEN) {
         uart2_printf("[GS RX HK] ERROR: packet too short (%u bytes, need %u)\r\n",
                      plen, GS_HK_PKT_LEN);
         return;
     }
+
+    /* The payload starts at an odd offset of the frame buffer (after the 17-byte AX.25 header); the int16 views below
+     * are halfword loads, which HardFault on the Cortex-M0+ when unaligned (seen on hardware 2026-11-03: the GS froze on
+     * the first HK packet). Work on a word-aligned copy. */
+    static uint32_t s_hk_words[GS_HK_PKT_LEN / 4U];
+    memcpy(s_hk_words, pkt_in, GS_HK_PKT_LEN);
+    const uint8_t *pkt = (const uint8_t *)s_hk_words;
 
     /* Verify structural footers */
     bool f1ok = (pkt[32] == GS_HK_FOOTER1_LO && pkt[33] == GS_HK_FOOTER1_HI);
@@ -577,7 +592,7 @@ static void GS_Display_HK_Packet(const uint8_t *pkt, uint16_t plen)
         "\"i_unreg\":%d,\"i_3v3\":%d,\"i_5v\":%d,\"i_bat\":%d,\"i_bus\":%d,"
         "\"f1\":%d,\"f2\":%d,"
         "\"gx\":%d,\"gy\":%d,\"gz\":%d,\"mx\":%d,\"my\":%d,\"mz\":%d,"
-        "\"seq\":%lu,\"crc\":%d,\"rssi\":%d,\"hex\":\"%s\"}\r\n",
+        "\"seq\":%lu,\"crc\":%d,\"rssi\":%d,\"hex\":\"",
         (int)adc1[0], (int)adc1[1], (int)adc1[2],
         (int)adc1[3], (int)adc1[4], (int)adc1[5], (int)adc1[6], (int)adc1[7],
         (int)adc1[8], (int)adc1[9], (int)adc1[10],
@@ -585,8 +600,12 @@ static void GS_Display_HK_Packet(const uint8_t *pkt, uint16_t plen)
         (int)adc2[10], (int)adc2[11],
         (int)imu[0], (int)imu[1], (int)imu[2],
         (int)imu[3], (int)imu[4], (int)imu[5],
-        (unsigned long)seq, f1ok && f2ok && enok ? 1 : 0, (int)s_last_rssi,
-        hk_hex);
+        (unsigned long)seq, f1ok && f2ok && enok ? 1 : 0, (int)s_last_rssi);
+    /* The 256-character hex string goes out separately: uart2_printf has a 360-byte buffer and the whole line (about 560
+     * characters) was cut off in the middle of the hex, so Mission Control could not parse a single HK packet (seen on
+     * hardware 2026-11-03). */
+    uart2_puts(hk_hex);
+    uart2_puts("\"}\r\n");
 }
 
 /* ============================================================================
@@ -659,9 +678,9 @@ static void GS_Handle_Camera_Chunk(const uint8_t *pkt, uint16_t plen)
                  gs_cam_jpeg_soi ? "[SOI] " : "",
                  gs_cam_jpeg_eoi ? "[EOI] " : "");
 
-    /* Output machine-readable tags for Python gs_communicator.py */
-    if (is_cam) {
-        static char cam_hex[GS_CAM_DATA_LEN * 2 + 1];
+    /* Output machine-readable tags for Python gs_communicator.py / Mission Control (both camera and file chunks carry their bytes as hex) */
+    static char cam_hex[GS_CAM_DATA_LEN * 2 + 1];
+    {
         static const char hexn[] = "0123456789ABCDEF";
         uint16_t n = 0;
         for (uint16_t i = 0; i < data_len && n + 2 < sizeof(cam_hex); i++) {
@@ -669,11 +688,13 @@ static void GS_Handle_Camera_Chunk(const uint8_t *pkt, uint16_t plen)
             cam_hex[n++] = hexn[data[i] & 0x0F];
         }
         cam_hex[n] = '\0';
+    }
+    if (is_cam) {
         uart2_printf("{\"type\":\"CAMERA\",\"pkt\":%u,\"total\":%u,\"offset\":%lu,\"len\":%u,\"hex\":\"%s\"}\r\n",
                      pkt_idx + 1, total_p, (unsigned long)offset, data_len, cam_hex);
     } else {
-        uart2_printf("{\"type\":\"FLASH\",\"pkt\":%u,\"total\":%u,\"addr\":%lu,\"len\":%u,\"status\":%u}\r\n",
-                     pkt_idx + 1, total_p, (unsigned long)offset, data_len, status);
+        uart2_printf("{\"type\":\"FLASH\",\"pkt\":%u,\"total\":%u,\"addr\":%lu,\"len\":%u,\"status\":%u,\"hex\":\"%s\"}\r\n",
+                     pkt_idx + 1, total_p, (unsigned long)offset, data_len, status, cam_hex);
         uart2_puts("[FLASH-HEX] ");
         for (uint16_t i = 0; i < data_len; i++) {
             uart2_printf("%02X ", data[i]);
@@ -1094,9 +1115,9 @@ void GS_Init(const GroundStationConfig_t *config)
 
     uart2_puts("\r\n========================================================================\r\n");
     uart2_puts("  ANTARIKCHYA PRATISTHAN NEPAL (APN)  —  S2S-2 GROUND STATION\r\n");
-    uart2_puts("  FW-ID: GS-G3RUH-20261006 | RFO_HP +22 dBm | FULL DOWNLINK DECODE\r\n");
+    uart2_puts("  FW-ID: GS-G3RUH-20261006 | RFO_HP +15 dBm | FULL DOWNLINK DECODE\r\n");
     uart2_puts("========================================================================\r\n");
-    uart2_printf("  Uplink TX       : %lu Hz  (437.375 MHz, RFO_HP, +22 dBm)\r\n",
+    uart2_printf("  Uplink TX       : %lu Hz  (437.375 MHz, RFO_HP, +15 dBm)\r\n",
                  (unsigned long)s_config.radio.txFrequency);
     uart2_printf("  Downlink RX     : %lu Hz  (435.000 MHz, CW + GMSK 4800 bps)\r\n",
                  (unsigned long)s_config.radio.rxFrequency);
@@ -1236,6 +1257,23 @@ bool GS_Send_Telecommand(uint8_t mcu_id, const uint8_t opcode[3],
     return GS_Send_Burst_Packet(cmd, sizeof(cmd), GS_SEND_COUNT);
 }
 
+/* FLAGS / SATLOG / RSVTABLE / EPDM / ADCS [chunks]: one file download of the file table. Returns true when the line was one of these. */
+static bool GS_File_Command(const char *u)
+{
+    for (unsigned i = 0; i < sizeof(GS_FILES) / sizeof(GS_FILES[0]); i++) {
+        size_t n = strlen(GS_FILES[i].cmd);
+        if (strncmp(u, GS_FILES[i].cmd, n) != 0 || (u[n] != '\0' && u[n] != ' ')) continue;
+        uint16_t cnt = (u[n] == ' ') ? (uint16_t)strtoul(u + n + 1, NULL, 10) : 5U;
+        if (cnt == 0) cnt = 5;
+        uart2_printf(">>> [UPLINK] %s download: %s (directory D%X, file F%X), %u chunks\r\n",
+                     GS_FILES[i].cmd, GS_FILES[i].file, GS_FILES[i].dir & 0x0F, GS_FILES[i].no & 0x0F, cnt);
+        const uint8_t opc[3] = { 0x1D, GS_FILES[i].dir, GS_FILES[i].no };
+        GS_Send_Telecommand(MCU_ID_OBC, opc, GS_FILES[i].no, 0UL, cnt);
+        return true;
+    }
+    return false;
+}
+
 bool GS_Send_Telecommand_ByName(const char *name, uint16_t count)
 {
     if (strcmp(name, "HK1")  == 0) return GS_Send_Burst_Packet(CMD_HK1,    13, GS_SEND_COUNT);
@@ -1244,8 +1282,8 @@ bool GS_Send_Telecommand_ByName(const char *name, uint16_t count)
     if (strcmp(name, "SNAP") == 0) return GS_Send_Burst_Packet(CMD_CAMON,  13, GS_SEND_COUNT);
     if (strcmp(name, "DUMMY") == 0 || strcmp(name, "DUMMYCAM") == 0 ||
         strcmp(name, "DC") == 0 || strcmp(name, "TESTCAM") == 0) {
-        static const uint8_t dummy_cmd[13] = { 0x53, 0x04, 0xCC, 0x5E, 0xBD,
-                                               0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+        static const uint8_t dummy_cmd[13] = { 0x53, 0x04, 0xCC, 0x5E, 0xBE,
+                                               0x00, 0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x45 };
         return GS_Send_Burst_Packet(dummy_cmd, 13, GS_SEND_COUNT);
     }
     if (strcmp(name, "PING") == 0) return GS_Send_Burst_Packet(CMD_PING,   13, GS_SEND_COUNT);
@@ -1273,6 +1311,8 @@ void GS_Auto_Send_Command(void)
 /* ============================================================================
  * HELP / STATUS
  * ========================================================================== */
+static void GS_Bw_Usage(void);
+
 void GS_Print_Help(void)
 {
     uart2_puts("\r\n=== GROUND STATION COMMANDS (1 packet per command) ===\r\n");
@@ -1284,7 +1324,8 @@ void GS_Print_Help(void)
     uart2_puts("  4 / D [cnt]     : Flash data request (cnt packets from address 0)\r\n");
     uart2_puts("  D ADDR CNT      : Flash data request (hex addr, decimal count)\r\n");
     uart2_puts("  P / PING        : Ping OBC\r\n");
-    uart2_puts("  ADCS / EPDM    : Subsystem telecommands\r\n");
+    uart2_puts("  ADCS / EPDM     : run the ADCS / EPDM mission (ACK only)\r\n");
+    uart2_puts("  ADCSFILE / EPDMFILE / FLAGS / SATLOG / RSVTABLE [n] : download adcs.txt / epdm.txt / flags.txt / sat_log.txt / rsv_table.txt (file table F7 F6 F1 F3 F4, n chunks of 128 bytes, default 5)\r\n");
     uart2_puts("  DIGI SRC>DEST,VIA:text : send one UI frame with that path (test the satellite digipeater)\r\n");
     uart2_puts("  BURST           : 50-packet GMSK burst test (0x01)\r\n");
     uart2_puts("  S               : Status\r\n");
@@ -1294,6 +1335,7 @@ void GS_Print_Help(void)
     uart2_puts("  PWR <dbm>       : Set TX power\r\n");
     uart2_puts("  CARRIER <sec>   : Test CW carrier on uplink frequency\r\n");
     uart2_puts("  LISTEN [ms]     : Listen for downlink packets for <ms> (default 30000)\r\n");
+    GS_Bw_Usage();
     uart2_puts("========================================================\r\n");
 }
 
@@ -1321,6 +1363,129 @@ void GS_Print_Status(void)
                  (int)CwRx_GetNoiseDbm(), (int)CwRx_GetPeakDbm());
     uart2_printf("  Auto-Command  : %s\r\n", s_auto_cmd_enabled ? "ON" : "OFF");
     uart2_puts("=============================\r\n");
+}
+
+/* ============================================================================
+ * TX BANDWIDTH TEST (ADDED, for a spectrum analyser such as a tinySA)
+ *
+ *   BW CW  [s] [dBm]   unmodulated carrier: marks the centre frequency (and the analyser's own frequency error)
+ *   BW DEV [s] [dBm]   packets of all-ones and all-zeros bits, alternating: two steady lines at fc +/- deviation.
+ *                      With max-hold the line spacing = 2 x deviation (design value 2 x 1200 Hz = 2.4 kHz)
+ *   BW CWB [s] [dBm]   Morse beacon "S2S2 9N2SJ" (500 ms tuning carrier, then the text at the satellite's keying speed), repeated
+ *                      for [s] seconds: a keyed carrier that is easy to spot on a waterfall
+ *   BW MOD [s] [dBm]   the real signal: framed pseudo-random packets (HDLC, NRZI, G3RUH scrambler, Gaussian BT 0.5, 4800 bit/s)
+ *                      sent back to back. This is the one to read the occupied bandwidth from.
+ *
+ * Seconds default to 10 (max 120). The test runs on the normal GS output (RFO_HP, the proven path) at +10 dBm by default (-9 .. +10 dBm; check the analyser's
+ * maximum input, use an attenuator if it is lower); the normal PA selection and power are restored afterwards. Nothing is received while it runs.
+ * ========================================================================== */
+#define GS_BW_DEFAULT_S     10UL
+#define GS_BW_MAX_S         120UL
+#define GS_BW_DEFAULT_DBM   10          /* requested for the tinySA bench; use an attenuator if the analyser is rated lower */
+#define GS_BW_MIN_DBM       (-9)        /* SX126x high-power PA range -9 .. +22 dBm */
+#define GS_BW_MAX_DBM       10          /* analyser inputs are rated about +6..+10 dBm */
+#define GS_BW_PAYLOAD_LEN   120U
+
+static void GS_Bw_Usage(void)
+{
+    uart2_puts("  BW CW|CWB|DEV|MOD [seconds] [dBm]  : TX spectrum test for a tinySA / SDR (RFO_HP, default +10 dBm, max +10)\r\n");
+    uart2_puts("      CW = carrier, CWB = Morse beacon, DEV = lines at fc +/- deviation, MOD = real GMSK signal (read the bandwidth here)\r\n");
+}
+
+static void GS_Bw_Test(const char *args)
+{
+    while (*args == ' ') args++;
+    const char *e = args;
+    while (*e && *e != ' ') e++;
+    size_t ml = (size_t)(e - args);
+    int kind = 0;                                   /* 1 CW, 2 DEV, 3 MOD */
+    if (ml == 2 && strncmp(args, "CW", 2) == 0)       kind = 1;
+    else if (ml == 3 && strncmp(args, "CWB", 3) == 0) kind = 4;
+    else if (ml == 3 && strncmp(args, "DEV", 3) == 0) kind = 2;
+    else if (ml == 3 && strncmp(args, "MOD", 3) == 0) kind = 3;
+    if (kind == 0) { GS_Bw_Usage(); return; }
+
+    char *endp = (char *)e;
+    unsigned long sec = strtoul(e, &endp, 10);
+    while (*endp == ' ') endp++;
+    long dbm = (*endp != '\0') ? strtol(endp, NULL, 10) : GS_BW_DEFAULT_DBM;
+    if (sec == 0) sec = GS_BW_DEFAULT_S;
+    if (sec > GS_BW_MAX_S) sec = GS_BW_MAX_S;
+    if (dbm > GS_BW_MAX_DBM) { dbm = GS_BW_MAX_DBM; uart2_puts("  (power limited to +10 dBm for this test)\r\n"); }
+    if (dbm < GS_BW_MIN_DBM) dbm = GS_BW_MIN_DBM;
+
+    uint32_t fc = s_config.radio.txFrequency;
+    uint8_t  saved_pa  = RadioApp_GetPaSelect();
+    int8_t   saved_pwr = RadioApp_GetTxPower();
+
+    /* the frame for MOD is built before the PA is touched: a failure leaves everything as it was */
+    uint16_t flen = RADIO_FIXED_PACKET_LEN;
+    if (kind == 3) {
+        uint8_t pay[GS_BW_PAYLOAD_LEN];
+        uint32_t x = 0x2545F491UL;                  /* xorshift32: any payload is whitened by the scrambler anyway */
+        for (unsigned i = 0; i < sizeof(pay); i++) { x ^= x << 13; x ^= x >> 17; x ^= x << 5; pay[i] = (uint8_t)x; }
+        flen = Protocol_CreatePacket(s_tx_frame, pay, sizeof(pay), &s_config.radio);
+        if (flen == 0) { uart2_puts("!!! [BW] could not build the test frame\r\n"); return; }
+    }
+
+    RadioApp_SetPaSelect(RFO_HP);
+    RadioApp_SetTxPower((int8_t)dbm);
+    GS_SetRFSwitch(RBI_SWITCH_RFO_HP);
+
+    uart2_printf("\r\n>>> [BW] %s for %lu s @ %lu Hz, RFO_HP %+d dBm <<<\r\n",
+                 kind == 1 ? "CW carrier" : kind == 4 ? "CW Morse beacon" : kind == 2 ? "DEV lines" : "MOD real GMSK signal",
+                 sec, (unsigned long)fc, (int)dbm);
+    uart2_puts("    tinySA: centre = TX frequency, span 30 kHz, RBW 1 kHz (300 Hz for detail), max hold.\r\n");
+    if (kind == 2) uart2_puts("    Expect two lines 2 x deviation apart (design: 2.4 kHz, fc +/- 1.2 kHz).\r\n");
+    if (kind == 3) uart2_puts("    Read the width at -3 / -20 / -40 dB below the peak with two markers (delta).\r\n");
+
+    CwRx_Mute(GS_GetTimeMs() + sec * 1000UL + GS_CW_MUTE_AFTER_TX_MS);
+    uint32_t sent = 0, timeouts = 0;
+    if (kind == 1) {
+        RadioApp_TransmitCarrier(fc, (uint32_t)sec);
+    } else if (kind == 4) {
+        const uint32_t unit = CW_UNIT_DEFAULT_MS;
+        uint32_t t_end = GS_GetTimeMs() + sec * 1000UL;
+        RadioApp_CwKeyBegin(fc);
+        do {
+            RadioApp_CwKey(true);  CPU2_Delay_Ms(500);              /* tuning carrier */
+            RadioApp_CwKey(false); CPU2_Delay_Ms(1000);
+            for (const char *t = S2S2_CW_CALLSIGN; *t; t++) {
+                if (*t == ' ') { CPU2_Delay_Ms(4 * unit); continue; }   /* 3 (after the character) + 4 = 7 units word gap */
+                const char *m = CwRx_MorseFor(*t);
+                for (; m && *m; m++) {
+                    RadioApp_CwKey(true);  CPU2_Delay_Ms(*m == '-' ? 3 * unit : unit);
+                    RadioApp_CwKey(false); CPU2_Delay_Ms(unit);
+                }
+                CPU2_Delay_Ms(2 * unit);                            /* 1 + 2 = 3 units between characters */
+            }
+            sent++;
+            CPU2_Delay_Ms(2000);
+        } while ((int32_t)(t_end - GS_GetTimeMs()) > 0);
+        RadioApp_CwKeyEnd();
+    } else {
+        uint32_t t_end = GS_GetTimeMs() + sec * 1000UL;
+        g_uart_quiet = 1;                           /* RadioApp_Send prints two lines per packet: keep the gaps short */
+        while ((int32_t)(t_end - GS_GetTimeMs()) > 0) {
+            if (kind == 2) memset(s_tx_frame, (sent & 1U) ? 0x00 : 0xFF, flen);
+            GS_Radio_Idle();
+            tx_busy = 1;
+            RadioApp_Send(s_tx_frame, flen);
+            uint32_t cnt = GS_TX_WAIT_MS;
+            while (tx_busy != 0 && cnt > 0) { CPU2_Delay_Ms(1); cnt--; }
+            if (tx_busy != 0) { timeouts++; tx_busy = 0; }
+            sent++;
+        }
+        g_uart_quiet = 0;
+    }
+
+    GS_Radio_Idle();
+    RadioApp_SetPaSelect(saved_pa);
+    RadioApp_SetTxPower(saved_pwr);
+    GS_SetRFSwitch(saved_pa == RFO_HP ? RBI_SWITCH_RFO_HP : RBI_SWITCH_RFO_LP);
+    GS_StartRx();
+    uart2_printf(">>> [BW] done: %lu packet(s)/beacon(s), %lu timeout(s); PA restored to %s %+d dBm, receiver armed <<<\r\n",
+                 (unsigned long)sent, (unsigned long)timeouts, saved_pa == RFO_HP ? "RFO_HP" : "RFO_LP", (int)saved_pwr);
 }
 
 /* ============================================================================
@@ -1359,8 +1524,8 @@ void GS_Handle_Command_Line(const char *p)
              strcmp(u, "DUMMY CAMERA") == 0 || strcmp(u, "DUMMY CAMERA DOWNLOAD") == 0 ||
              strcmp(u, "DUMMY CAM DOWNLOAD") == 0) {
         uart2_puts(">>> [UPLINK] DUMMY CAMERA TEST (stored test image downlink)\r\n");
-        uint8_t dummy_cmd[13] = { 0x53, 0x04, 0xCC, 0x5E, 0xBD,
-                                  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+        uint8_t dummy_cmd[13] = { 0x53, 0x04, 0xCC, 0x5E, 0xBE,
+                                  0x00, 0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x45 };
         SEND13(dummy_cmd);
     }
     /* Camera download */
@@ -1374,15 +1539,17 @@ void GS_Handle_Command_Line(const char *p)
         gs_cam_pkt_recv = 0;
         SEND13(CMD_CAMDOWN);
     }
-    /* ADCS */
+    /* ADCS / EPDM: run the mission (reference firmware commands) */
     else if (strcmp(u, "ADCS") == 0) {
-        uart2_puts(">>> [UPLINK] ADCS\r\n");
+        uart2_puts(">>> [UPLINK] ADCS mission run (MCU 03)\r\n");
         SEND13(CMD_ADCS);
     }
-    /* EPDM */
     else if (strcmp(u, "EPDM") == 0) {
-        uart2_puts(">>> [UPLINK] EPDM\r\n");
+        uart2_puts(">>> [UPLINK] EPDM mission run (MCU 05)\r\n");
         SEND13(CMD_EPDM);
+    }
+    /* file downloads of the sheet's file table: FLAGS, SATLOG, RSVTABLE, EPDMFILE, ADCSFILE [chunks] */
+    else if (GS_File_Command(u)) {
     }
     /* Flash / Data request: D [count] or D ADDR CNT */
     else if (strcmp(u, "4") == 0 || strncmp(u, "D ", 2) == 0 ||
@@ -1425,7 +1592,7 @@ void GS_Handle_Command_Line(const char *p)
         SEND13(flash_cmd);
     }
     /* DIGI SRC>DEST,VIA,VIA:text -- one UI frame with that path, for testing the satellite digipeater, e.g.
-     *   DIGI K1ABC>APRS,ARISS:hello      DIGI K1ABC>APRS,WIDE2-2:!4237.14N/07120.83W-test */
+     *   DIGI K1ABC>APRS,APNDIG:hello      DIGI K1ABC>APRS,WIDE2-2:!4237.14N/07120.83W-test */
     else if (strncmp(u, "DIGI ", 5) == 0) {
         uint8_t body[DIGI_MAX_BODY];
         uint16_t bl = Digi_FromTnc2(p + 5, body, sizeof(body));
@@ -1451,6 +1618,10 @@ void GS_Handle_Command_Line(const char *p)
         uint8_t b = 0x01;
         uart2_puts(">>> [UPLINK] Burst request (0x01)\r\n");
         GS_Send_Burst_Packet(&b, 1, GS_SEND_COUNT);
+    }
+    /* TX bandwidth test for a spectrum analyser */
+    else if (strncmp(u, "BW", 2) == 0 && (u[2] == '\0' || u[2] == ' ')) {
+        GS_Bw_Test(u + 2);
     }
     /* Listen for downlink */
     else if (strncmp(u, "LISTEN", 6) == 0) {

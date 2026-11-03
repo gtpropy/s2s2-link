@@ -7,7 +7,9 @@ parse_gs_line(text) -> list of event dicts, each {"kind": ..., ...}:
     cw         {"text": "S2S2 9N2SJ ..."}            decoded Morse text
     beacon     {"hex": "...", "b1": {...}, "b2": {...}}   the 8 CW housekeeping bytes read both ways (Packet Format sheet, CW)
     camera     {"pkt": 1, "total": 69, "hex": "..."}    one camera fragment (also goes to the image store)
+    file       {"pkt": 1, "total": 5, "addr": 0, "len": 128, "hex": "..."}   one chunk of a file download (epdm.txt, adcs.txt, sat_log.txt, housekeeping ...)
     rssi       {"rssi": -97, "snr": 0}                 one received radio packet
+    ascii      {"text": "ACK: PING OK (OBC_ONLINE)"}    a plain-text answer of the satellite (ping)
     hk         {}                                      a 128-byte housekeeping packet was shown
     rate       {...}                                   raw-rate counters
 EventLog keeps the last events in memory and in a small SQLite file (data/testbench/events.db) so the dashboard has history after a restart.
@@ -31,13 +33,17 @@ MISSION_ST = {0: "reserved", 1: "camera", 2: "ADCS", 3: "EPDM"}
 _JSON = re.compile(r'\{"type":"([A-Z0-9]+)".*\}')
 
 
+def _s16(v):
+    return v - 65536 if v > 32767 else v
+
+
 def decode_beacon(hexs):
     """8 bytes of CW BEACON 1 / 2 (Packet Format, CW sheet). The sheet has no beacon number, so both readings are returned."""
     b = bytes.fromhex(hexs)
     if len(b) != 8:
         return None
     b1 = {"system": SYS.get(b[0] >> 6, "?"), "mission": MISSION_ST.get((b[0] >> 4) & 3, "?"), "hours_since_reset": b[0] & 15,
-          "sol_total_i": b[1], "sol_total_v": (b[2] << 8) | b[3], "bat_v": ((b[4] << 8) | b[5]) / 100.0, "bat_i": ((b[6] << 8) | b[7]) / 100.0}
+          "sol_total_i": b[1], "sol_total_v": (b[2] << 8) | b[3], "bat_v": ((b[4] << 8) | b[5]) / 100.0, "bat_i": _s16((b[6] << 8) | b[7]) / 100.0}   # BAT_I is the OBC's int16 (negative = discharging)
 
     def s8(x):
         return x - 256 if x > 127 else x
@@ -90,6 +96,9 @@ def parse_gs_line(txt):
             elif t == "CAMERA":
                 out.append({"kind": "camera", "pkt": j.get("pkt"), "total": j.get("total"), "offset": j.get("offset"),
                             "len": j.get("len"), "hex": j.get("hex", "")})
+            elif t == "FLASH":                           # one chunk of a file / housekeeping download (128 bytes of the OBC file)
+                out.append({"kind": "file", "pkt": j.get("pkt"), "total": j.get("total"), "addr": j.get("addr"), "len": j.get("len"),
+                            "status": j.get("status", 0), "hex": j.get("hex", "")})
             elif t == "HK":
                 out.append({"kind": "hk", **decode_hk(j)})
             elif t == "RATE":
@@ -100,6 +109,9 @@ def parse_gs_line(txt):
     m = re.search(r"\[CW DECODED\] (.*)", txt)
     if m:
         out.append({"kind": "cw", "text": m.group(1).strip()})
+    m = re.search(r'\[GS RX\] ASCII response: "(.*)"', txt)
+    if m:                                                    # e.g. the ping answer "ACK: PING OK (OBC_ONLINE)"
+        out.append({"kind": "ascii", "text": m.group(1)})
     m = re.search(r"\[GS RX\] Packet #(\d+) \| RSSI=(-?\d+) dBm \| SNR=(-?\d+) dB \| (\d+) bytes", txt)
     if m:
         out.append({"kind": "rssi", "n": int(m.group(1)), "rssi": int(m.group(2)), "snr": int(m.group(3)), "bytes": int(m.group(4))})
@@ -110,7 +122,7 @@ def parse_gs_line(txt):
 
 class EventLog:
     """Last events in memory (ring) and in SQLite. Noisy kinds (cwraw, rssi) are kept in memory only."""
-    PERSIST = {"ack", "nack", "cw", "beacon", "hk", "digi", "frame", "command", "test"}
+    PERSIST = {"ack", "nack", "cw", "beacon", "hk", "file", "ascii", "digi", "frame", "command", "test"}
 
     def __init__(self, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -136,6 +148,21 @@ class EventLog:
         with self.lock:
             rows = [e for e in self.ring if kind is None or e["kind"] == kind]
         return rows[-limit:]
+
+    def between(self, t0, t1, kinds=None):
+        """Persisted events with t0 <= t < t1, oldest first (kinds: iterable of kind names or None)."""
+        q, a = "SELECT body FROM ev WHERE t >= ? AND t < ?", [t0, t1]
+        if kinds:
+            q += " AND kind IN (%s)" % ",".join("?" * len(kinds))
+            a += list(kinds)
+        q += " ORDER BY t"
+        with self.lock:
+            return [json.loads(r[0]) for r in self.db.execute(q, a)]
+
+    def counts(self, t0, t1):
+        """{kind: number of persisted events} with t0 <= t < t1."""
+        with self.lock:
+            return dict(self.db.execute("SELECT kind, COUNT(*) FROM ev WHERE t >= ? AND t < ? GROUP BY kind", (t0, t1)).fetchall())
 
     def history(self, kind=None, limit=500):
         q, a = "SELECT body FROM ev", []

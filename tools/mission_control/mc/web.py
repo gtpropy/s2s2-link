@@ -7,8 +7,8 @@ import authz
 import httpx
 import imagestore
 from httpx import Raw
-from mc import core
-from mc.core import BUS, CATALOG, CUR, DBL, DB, EVENTS, HERE, IMAGES, JOBS, ROOT, audit, csv_export, history_jobs, job_update, now, series, set_setting, snapshot, submit
+from mc import core, gdrive, link, orbit, passes, store, xlsxio, docxgen
+from mc.core import BUS, CATALOG, rawlog, CUR, DBL, DB, EVENTS, HERE, IMAGES, JOBS, ROOT, audit, csv_export, history_jobs, job_update, now, series, set_setting, snapshot, submit
 
 COOKIE = "s2s2mc"
 router = httpx.Router()
@@ -73,6 +73,9 @@ def r_series(req):
 
 @get("/api/events")
 def r_events(req):
+    if req.q.get("since"):                                   # a time range from the database (trend charts), oldest first
+        kind = req.q.get("kind")
+        return EVENTS.between(float(req.q["since"]), time.time() + 1, [kind] if kind else None)[-int(req.q.get("limit", 20000)):]
     return EVENTS.history(req.q.get("kind"), int(req.q.get("limit", 300)))
 
 
@@ -82,6 +85,36 @@ def r_export(req):
     if k not in ("hk", "beacon", "ack", "nack", "cw"):
         raise ValueError("bad kind")
     return Raw(csv_export(k).encode(), "text/csv", headers={"Content-Disposition": f'attachment; filename="s2s2_{k}.csv"'})
+
+
+@get("/api/rawlog")
+def r_rawlog(req):
+    return rawlog(req.q.get("n", 500), req.q.get("q", "")[:80], req.q.get("kind", ""))
+
+
+@get("/api/orbit")
+def r_orbit(req):
+    return orbit.get()
+
+
+@post("/api/orbit", role="admin")
+def r_orbit_set(req):
+    d = body(req)
+    try:
+        if d.get("station"):
+            orbit.set_station(d["station"])
+        if "launch" in d:
+            orbit.set_launch(str(d["launch"] or ""))
+        if d.get("line1") and d.get("line2"):
+            orbit.set_manual(str(d.get("name", "")), str(d["line1"]), str(d["line2"]))
+        elif d.get("norad") or d.get("cospar") or d.get("url") or d.get("refresh"):
+            rec = orbit.refresh(d.get("norad"), d.get("cospar"), d.get("url"))
+            if rec.get("error"):
+                audit(req.user, "orbit", rec["error"])
+    except (ValueError, KeyError) as e:
+        return (400, {"error": str(e)})
+    audit(req.user, "orbit", json.dumps({k: v for k, v in d.items() if k in ("norad", "cospar", "url", "refresh", "station", "launch")}))
+    return orbit.get()
 
 
 @get("/api/images")
@@ -104,7 +137,7 @@ def r_image(req):
 # ---------------------------------------------------------------- commands
 @get("/api/catalog")
 def r_catalog(req):
-    return [{**c, "allowed": core.AUTH.allows(req.user, c["role"])} for c in CATALOG]
+    return [{**c, "allowed": True} for c in CATALOG]                  # every command may be sent by every signed-in operator (no role check, no password)
 
 
 @get("/api/commands")
@@ -118,17 +151,15 @@ def r_command(req):
     c = next((x for x in CATALOG if x["id"] == d.get("id")), None)
     if not c:
         raise ValueError("unknown command")
-    if not core.AUTH.allows(req.user, c["role"]):
-        return (403, {"error": f"needs role {c['role']}"})
-    if c.get("critical") and not core.AUTH.verify(req.user, str(d.get("password", ""))):
-        audit(req.user, "critical command refused", c["id"])
-        return (403, {"error": "password confirmation failed"})
-    jid = submit(req.user, c["id"], d.get("args", {}))
+    try:
+        jid = submit(req.user, c["id"], d.get("args", {}))
+    except (RuntimeError, ValueError) as e:
+        return (400, {"error": str(e)})
     audit(req.user, "command", f"{c['id']} -> {JOBS[jid]['line']}")
     return {"job": jid}
 
 
-@post("/api/command/cancel", role="operator")
+@post("/api/command/cancel")
 def r_cancel(req):
     jid = int(body(req)["id"])
     if CUR["id"] == jid:
@@ -136,6 +167,189 @@ def r_cancel(req):
     elif jid in JOBS and JOBS[jid]["state"] == "queued":
         job_update(jid, state="cancelled", t_end=now())
     audit(req.user, "cancel", str(jid))
+
+
+
+# ---------------------------------------------------------------- link supervision (heartbeat, automatic sampling)
+@get("/api/link")
+def r_link(req):
+    return link.state()
+
+
+@post("/api/link")
+def r_link_set(req):
+    d = body(req)
+    audit(req.user, "link settings", json.dumps({k: d[k] for k in ("enabled", "autosample") if k in d}))
+    return link.set_cfg(**{k: d[k] for k in ("enabled", "autosample") if k in d})
+
+
+@get("/api/passes")
+def r_passes(req):
+    return passes.predict(time.time() - 3600, int(req.q.get("hours", 50)))
+
+
+# ---------------------------------------------------------------- data store, reports, Google Drive
+@get("/api/home")
+def r_home(req):
+    st = store.status()
+    days = store.list_days()
+    return {"gs": snapshot()["gs"], "link": link.state(), "store": st, "days": days, "retention_days": st["cfg"]["retention_days"], "drive": gdrive.public_config(), "t": now()}
+
+
+@get("/api/drive/stats")
+def r_drive_stats(req):
+    return gdrive.stats(max_age=int(req.q.get("age", 120)))
+
+
+@post("/api/store/flush")
+def r_flush(req):
+    store.flush(force=True)
+    return store.status()
+
+
+@post("/api/store/upload")
+def r_upload(req):
+    audit(req.user, "drive upload", "manual")
+    return gdrive.sync_all()
+
+
+@post("/api/store/cfg", role="admin")
+def r_store_cfg(req):
+    d = body(req)
+    c = store.cfg()
+    if d.get("retention_days"):
+        c["retention_days"] = max(1, min(365, int(d["retention_days"])))
+    if "delete_requires_upload" in d:
+        c["delete_requires_upload"] = bool(d["delete_requires_upload"])
+    core.set_setting("store_cfg", c)
+    audit(req.user, "store settings", json.dumps(c))
+    return store.status()
+
+
+@get("/api/gdrive")
+def r_gdrive(req):
+    return gdrive.public_config()
+
+
+@post("/api/gdrive", role="admin")
+def r_gdrive_set(req):
+    try:
+        r = gdrive.save_config(body(req))
+    except (ValueError, KeyError) as e:
+        return (400, {"error": str(e)})
+    audit(req.user, "gdrive settings", json.dumps({k: v for k, v in r.items() if k != "error"}))
+    return r
+
+
+@get("/api/gdrive/oauth", role="admin")
+def r_gdrive_oauth(req):
+    redirect = "http://%s/api/gdrive/callback" % req.headers.get("Host", "127.0.0.1:8770")
+    if not gdrive.cfg().get("client_id"):
+        return (400, {"error": "enter the OAuth client id first"})
+    return {"url": gdrive.oauth_url(redirect), "redirect": redirect}
+
+
+@get("/api/gdrive/callback")
+def r_gdrive_cb(req):
+    redirect = "http://%s/api/gdrive/callback" % req.headers.get("Host", "127.0.0.1:8770")
+    try:
+        gdrive.oauth_exchange(req.q.get("code", ""), redirect)
+        audit(req.user, "gdrive authorised", "")
+        msg = "Google Drive is authorised. You can close this tab."
+    except Exception as e:
+        msg = "Authorisation failed: %s" % e
+    return Raw(("<html><body style='font-family:sans-serif;padding:2rem'><h2>%s</h2><a href='/#home'>Back to Mission Control</a></body></html>" % msg).encode(), "text/html")
+
+
+@get("/api/reports")
+def r_reports(req):
+    local = {d["name"]: d for d in store.list_days()}
+    out = [{**d, "drive": False} for d in local.values()]
+    try:
+        for d in gdrive.list_days():
+            if d["name"] in local:
+                local[d["name"]]["drive"] = True
+            else:
+                out.append({"name": d["name"], "date": d["name"][:10], "local": False, "drive": True, "bytes": None, "files": None, "uploaded": True})
+    except Exception as e:
+        return {"days": sorted(out, key=lambda x: x["name"], reverse=True), "drive_error": str(e)}
+    return {"days": sorted(out, key=lambda x: x["name"], reverse=True)}
+
+
+@post("/api/reports/pull")
+def r_pull(req):
+    name = str(body(req)["name"])
+    if store.day_path(name):
+        return {"pulled": False, "where": "local"}
+    try:
+        r = gdrive.download_day(name, store.PULLED)
+    except Exception as e:
+        return (400, {"error": str(e)})
+    audit(req.user, "report pulled", name)
+    return {"pulled": True, "where": "pulled", **r}
+
+
+def _day(req):
+    name = req.q.get("name", "")
+    p = store.day_path(name) or store.day_path(name, pulled=True)
+    if not p:
+        raise ValueError("that day is not on this computer (pull it first)")
+    return p
+
+
+@get("/api/report")
+def r_report(req):
+    p = _day(req)
+    files = store.tree(p)
+    summary = None
+    g = os.path.join(p, "GS_report.xlsx")
+    if os.path.exists(g):
+        try:
+            summary = {s["name"]: s["rows"] for s in xlsxio.read_xlsx(g, 300)}
+        except Exception:
+            summary = None
+    ds = os.path.join(p, "Storage", "DAY_SUMMARY", "Day_Summary.xlsx")
+    if summary is not None and os.path.exists(ds):                       # the day summary sheets appear as extra tabs of the report viewer
+        try:
+            for s in xlsxio.read_xlsx(ds, 300):
+                if s["name"] in ("At a glance", "Anomalies", "Contacts", "Satellite health", "Link quality", "Environment"):
+                    summary["Day: " + s["name"] if s["name"] == "Link quality" else s["name"]] = s["rows"]
+        except Exception:
+            pass
+    return {"name": req.q.get("name"), "files": files, "gs_report": summary}
+
+
+def _file(req):
+    p = _day(req)
+    rel = os.path.normpath(req.q.get("path", ""))
+    full = os.path.normpath(os.path.join(p, rel))
+    if rel.startswith("..") or not full.startswith(p + os.sep) or not os.path.isfile(full):
+        raise ValueError("no such file")
+    return full
+
+
+@get("/api/report/file")
+def r_report_file(req):
+    full = _file(req)
+    ext = os.path.splitext(full)[1].lower()
+    mime = {".jpeg": "image/jpeg", ".jpg": "image/jpeg", ".png": "image/png", ".txt": "text/plain; charset=utf-8", ".log": "text/plain; charset=utf-8"}.get(ext, "application/octet-stream")
+    if mime.startswith("text/") and os.path.getsize(full) > 2_000_000:
+        data = open(full, "rb").read()[-2_000_000:]
+    else:
+        data = open(full, "rb").read()
+    hd = {"Content-Disposition": 'attachment; filename="%s"' % os.path.basename(full)} if "download" in req.q else None
+    return Raw(data, mime, headers=hd)
+
+
+@get("/api/report/sheet")
+def r_report_sheet(req):
+    full = _file(req)
+    return xlsxio.read_xlsx(full, int(req.q.get("rows", 300)))
+
+
+@get("/api/report/docx")
+def r_report_docx(req):
+    return {"text": docxgen.docx_text(_file(req))}
 
 
 # ---------------------------------------------------------------- administration

@@ -6,7 +6,7 @@
   /* ------------------------------------------------------------------ Digipeater */
   function Digipeater() {
     const s = useStore();
-    const [txt, setTxt] = useState('K1ABC>APZS2S,ARISS:>hello store and forward');
+    const [txt, setTxt] = useState('K1ABC>APZS2S,APNDIG:>hello store and forward');
     const [store, setStore] = useState(null);
     const [msg, setMsg] = useState('');
     const [sdr, setSdr] = useState(false);
@@ -22,7 +22,7 @@
         <div class="row"><input class="grow mono" value=${txt} onInput=${e => setTxt(e.target.value)} />
           <button class="pri" onClick=${gsAir}>Ground station → air → satellite</button><button onClick=${inject}>Inject through the Nucleo</button>
           <button onClick=${show}>Show stored</button><button class="danger" onClick=${clear}>Clear journal</button></div>
-        <p class="hint">Format SRC>DEST,VIA1,VIA2:text. Via ARISS or WIDE2-n is repeated (n counts down, the hop budget); another station's call sign is ignored. Rate limit: 6 repeats a minute.</p>
+        <p class="hint">Format SRC>DEST,VIA1,VIA2:text. Via APNDIG or WIDE2-n is repeated (n counts down, the hop budget); another station's call sign is ignored. Rate limit: 6 repeats a minute.</p>
         ${msg && h`<p><b>${msg}</b></p>`}
         ${store && h`<p class="hint">${store.journal} · <b>stored ${store.stored} msg, ${store.bytes} B</b></p>${store.objects.length ? table(store.objects) : null}`}
       </div>

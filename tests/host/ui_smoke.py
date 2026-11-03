@@ -4,7 +4,7 @@ ui_smoke.py -- open every page of a web tool in headless Chrome (DevTools protoc
 No hardware is touched: the servers are started without any serial port, SWD probe or SDR.
 
     python3 tests/host/ui_smoke.py http://127.0.0.1:8765 dashboard consoles profiler ...
-    python3 tests/host/ui_smoke.py http://127.0.0.1:8770 overview attitude ... --login admin:PASSWORD
+    python3 tests/host/ui_smoke.py http://127.0.0.1:8770 home dashboard commands history telemetry location logs pictures help settings cmd/health --login admin:PASSWORD
 """
 import json
 import os
@@ -36,7 +36,7 @@ def main():
         os.makedirs(shot_dir, exist_ok=True)
     s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
     prof = tempfile.mkdtemp(prefix="s2s2smoke")
-    p = subprocess.Popen([reporting.CHROME, "--headless=new", "--disable-gpu", "--no-first-run", f"--remote-debugging-port={port}",
+    p = subprocess.Popen([reporting.CHROME, "--headless=new", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist", "--no-first-run", f"--remote-debugging-port={port}",
                           f"--user-data-dir={prof}", "--window-size=1500,1000", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     bad = 0
     try:
@@ -83,7 +83,7 @@ def main():
                 print(("ok   " if ok else "FAIL ") + pgname.ljust(12), f"{txt} chars", errors[:2] if errors else "")
                 if shot_dir:
                     import base64
-                    open(os.path.join(shot_dir, pgname + ".png"), "wb").write(base64.b64decode(call("Page.captureScreenshot", format="png")["data"]))
+                    open(os.path.join(shot_dir, pgname.replace("/", "_") + ".png"), "wb").write(base64.b64decode(call("Page.captureScreenshot", format="png")["data"]))
     finally:
         try:
             os.killpg(p.pid, 9)

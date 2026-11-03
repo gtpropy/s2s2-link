@@ -54,7 +54,18 @@ extern "C" {
  *       * 5V External PA (PC3 / PA0 Boost): ~27 to 28.5 dBm output
  *   - (Note: 9 dBm was previously used for current-limited ST-Link USB bench testing)
  */
+#ifndef RADIO_TX_POWER_DBM              /* the mock satellite (tests/mocksat) sets its own */
 #define RADIO_TX_POWER_DBM             14
+#endif
+/* Highest drive the satellite accepts, and the drive kept during a GMSK session (14 dBm brown-outs the 5 V PA of the flight board).
+ * The mock satellite runs on a stock Nucleo (RFO_HP, no external PA), where RADIO_TX_POWER_DBM is used for both. */
+#ifdef S2S2_MOCKSAT
+#define SAT_TX_DBM_MAX                 22
+#define SAT_GMSK_DBM                   RADIO_TX_POWER_DBM
+#else
+#define SAT_TX_DBM_MAX                 14
+#define SAT_GMSK_DBM                   10
+#endif
 
 /*
  * SX126x RFO_LP paDutyCycle used when driving the 5V External PA (GMSK).

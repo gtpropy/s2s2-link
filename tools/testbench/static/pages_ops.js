@@ -61,7 +61,7 @@
       <${LinkBar} kind="gs" />
       <${Palette} items=${s.palette ? s.palette.gs : []} onPick=${pick} />
       <${Terminal} lines=${s.gs} onClear=${() => { state.gs = []; emit(); }} />
-      <${CmdInput} placeholder="HK1 · PING · DIGI K1ABC>APZS2S,ARISS:>hi · HEX 53 01 ... · HELP" onSubmit=${gsSend} setRef=${f => (setV.current = f)} hist=${hist} />
+      <${CmdInput} placeholder="HK1 · PING · DIGI K1ABC>APZS2S,APNDIG:>hi · HEX 53 01 ... · HELP" onSubmit=${gsSend} setRef=${f => (setV.current = f)} hist=${hist} />
     </div>`;
   }
 
@@ -102,13 +102,13 @@
       <${LinkBar} kind="obc" />
       <${Palette} items=${s.palette ? s.palette.obc.map(o => ({ ...o, label: o.name, group: o.danger ? 'caution' : (o.args && o.args.length ? 'with arguments' : 'no arguments') })) : []} onPick=${pick} />
       <${Terminal} lines=${s.sat} onClear=${() => { state.sat = []; emit(); }} />
-      <${CmdInput} placeholder="STATUS · INFO · SAF 0 · INJECT K1ABC>APZS2S,ARISS:>hi · READF 2 · RAW c5c5c5c5c5c5c5c5a7 ..." onSubmit=${obcRun} setRef=${f => (setV.current = f)} hist=${hist} />
+      <${CmdInput} placeholder="STATUS · INFO · SAF 0 · INJECT K1ABC>APZS2S,APNDIG:>hi · READF 2 · RAW c5c5c5c5c5c5c5c5a7 ..." onSubmit=${obcRun} setRef=${f => (setV.current = f)} hist=${hist} />
     </div>`;
   }
 
   /* ------------------------------------------------------------------ digipeater quick flow (GS -> satellite -> repeat) */
   function DigiFlow() {
-    const [txt, setTxt] = useState('K1ABC>APZS2S,ARISS:>hello via the ground station');
+    const [txt, setTxt] = useState('K1ABC>APZS2S,APNDIG:>hello via the ground station');
     const [recs, setRecs] = useState(null);
     const showStore = async () => {
       echo('sat', '› SAF 0', 'you');

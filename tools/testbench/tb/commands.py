@@ -29,7 +29,7 @@ COMMANDS = [
     {"id": "bad", "group": "Link", "label": "Invalid opcode (expect NACK)", "gs": "HEX 53 01 FF FF FF 00 00 00 00 00 00 00 00",
      "opcode": "53 01 FF FF FF", "help": "The satellite must answer NACK 0xEE 0x09 (invalid command)."},
     {"id": "digi", "group": "Digipeater", "label": "Digipeater test frame", "gs": "DIGI {text}",
-     "args": [{"name": "text", "label": "SRC>DEST,VIA:text", "default": "K1ABC>APZS2S,ARISS:>hello via the ground station"}],
+     "args": [{"name": "text", "label": "SRC>DEST,VIA:text", "default": "K1ABC>APZS2S,APNDIG:>hello via the ground station"}],
      "help": "One UI frame with that path; the satellite repeats it on the downlink."},
     {"id": "status", "group": "Ground station", "label": "GS status", "gs": "S", "help": "Counters of the ground station."},
 ]

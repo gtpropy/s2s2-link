@@ -24,6 +24,9 @@
 extern "C" {
 #endif
 
+/* Morse pattern of a character (".-" style) or NULL (transmit test BW CWB) */
+const char *CwRx_MorseFor(char c);
+
 /* ---- Tunables ------------------------------------------------------------ */
 #define CW_SAMPLE_MS           5U      /* RSSI sampling period                  */
 /* CHANGED: was 80 ms (15 WPM). Must equal SAT_CFG_DEFAULT_CW_MORSE_UNIT_MS in the satellite; every threshold

@@ -324,7 +324,7 @@ static bool s_cw_cfg_valid = false;
 
 void Satellite_CW_Prepare(void) {
     int8_t power = (s_config.txPowerDbm != 0) ? s_config.txPowerDbm : RADIO_TX_POWER_DBM;
-    if (power > 14) power = 14;
+    if (power > SAT_TX_DBM_MAX) power = SAT_TX_DBM_MAX;
     /* CHANGED: was hard-coded RFO_LP. SAT_PA_SEL = RFO_LP on FRONTEND=CUSTOM, RFO_HP on the stock
      * Nucleo (its RF switch only routes the HP PA to the antenna), see Mission/config.h. */
     uint8_t pa_sel = SAT_PA_SEL;
@@ -361,7 +361,7 @@ void Satellite_CW_CarrierOn(void) {
         return;
     }
     int8_t power = (s_config.txPowerDbm != 0) ? s_config.txPowerDbm : RADIO_TX_POWER_DBM;
-    if (power > 14) power = 14;
+    if (power > SAT_TX_DBM_MAX) power = SAT_TX_DBM_MAX;
     SAT_SET_PA_CONFIG(); /* CHANGED: was RFO_LP-only; PA and switch path now follow FRONTEND (Mission/config.h) */
     SUBGRF_SetTxParams(SAT_PA_SEL, power, RADIO_RAMP_200_US); /* soft ramp: smaller supply current step */
     SUBGRF_WriteRegister(REG_OCP, SAT_CW_OCP);
@@ -504,7 +504,7 @@ void Satellite_Hold_Continuous_Carrier_5V(uint32_t seconds) {
     uart1_puts("============================================================\r\n");
 
     int8_t power = (s_config.txPowerDbm != 0) ? s_config.txPowerDbm : RADIO_TX_POWER_DBM;
-    if (power > 14) power = 14;
+    if (power > SAT_TX_DBM_MAX) power = SAT_TX_DBM_MAX;
     uint8_t pa_sel = SAT_PA_SEL;
     Radio.Standby();
 
@@ -607,7 +607,7 @@ void Satellite_SetConfig(const SatelliteConfig_t *config) {
         memcpy(&s_config, &SatelliteDefaultConfig, sizeof(SatelliteConfig_t));
     }
     int8_t power = (s_config.txPowerDbm != 0) ? s_config.txPowerDbm : RADIO_TX_POWER_DBM;
-    if (power > 14) power = 14;
+    if (power > SAT_TX_DBM_MAX) power = SAT_TX_DBM_MAX;
     uint8_t pa_sel = SAT_PA_SEL;
     RadioApp_SetTxPower(power);
     RadioApp_SetPaSelect(pa_sel);
@@ -960,7 +960,7 @@ bool Satellite_Run_CW_Session_Ex(uint32_t cycle,
 
 void Satellite_GMSK_Prepare(void) {
     int8_t power = (s_config.txPowerDbm != 0) ? s_config.txPowerDbm : RADIO_TX_POWER_DBM;
-    if (power > 14) power = 14;
+    if (power > SAT_TX_DBM_MAX) power = SAT_TX_DBM_MAX;
     uint8_t pa_sel = SAT_PA_SEL;
 
     const bool pa5v_already_on =
@@ -988,7 +988,7 @@ void Satellite_GMSK_Prepare(void) {
     CPU2_Delay_Ms(SAT_SWITCH_SETTLE_MS);   /* CHANGED: was 40 ms; see Mission/config.h */
 
     SUBGRF_SetPacketType(PACKET_TYPE_GFSK);
-    RadioApp_SetTxPower(10); /* keep 10 dBm for whole 5V PA session (14 dBm brown-outs) */
+    RadioApp_SetTxPower(SAT_GMSK_DBM); /* keep 10 dBm for whole 5V PA session (14 dBm brown-outs); the mock (Nucleo) uses its configured power */
     RadioApp_SetPaSelect(pa_sel);
 }
 

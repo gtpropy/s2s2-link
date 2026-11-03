@@ -15,7 +15,7 @@ from gslink import GSLink
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))        # tools/mission_control
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-DATA = os.path.join(ROOT, "data", "mission_control")
+DATA = os.environ.get("S2S_MC_DATA") or os.path.join(ROOT, "data", "mission_control")        # the variable is for tests
 
 
 def now():
@@ -28,8 +28,8 @@ class Bus:
         self.lock = threading.Lock()
         self.subs = []
 
-    def publish(self, kind, **kw):
-        ev = {"t": round(now(), 3), "kind": kind, **kw}
+    def publish(self, _kind, **kw):
+        ev = {"t": round(now(), 3), "kind": _kind, **kw}
         with self.lock:
             subs = list(self.subs)
         for q in subs:
@@ -52,7 +52,14 @@ class Bus:
 
 BUS = Bus()
 EVENTS = ev_mod.EventLog(os.path.join(DATA, "events.db"))
-IMAGES = imagestore.ImageStore(os.path.join(DATA, "images"), lambda kind, **kw: BUS.publish(kind, **kw))
+def _publish_image(name, **kw):
+    """The image summary carries a field called "kind" (jpg / png); the bus event already has one, so it is passed on as "media"."""
+    if "kind" in kw:
+        kw["media"] = kw.pop("kind")
+    BUS.publish(name, **kw)
+
+
+IMAGES = imagestore.ImageStore(os.path.join(DATA, "images"), _publish_image)
 AUTH = None                                          # created by init()
 
 # ----------------------------------------------------------------------------------------------------------------- database
@@ -63,7 +70,24 @@ with DBL:
                "state TEXT, detail TEXT, t_end REAL)")
     DB.execute("CREATE TABLE IF NOT EXISTS audit (t REAL, user TEXT, action TEXT, detail TEXT)")
     DB.execute("CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT)")
+    DB.execute("CREATE TABLE IF NOT EXISTS hb (t REAL, ok INTEGER, rtt REAL, rssi REAL, snr REAL)")
+    DB.execute("CREATE INDEX IF NOT EXISTS hb_t ON hb (t)")
+    DB.execute("CREATE TABLE IF NOT EXISTS raw (t REAL, text TEXT)")
+    DB.execute("CREATE INDEX IF NOT EXISTS raw_t ON raw (t)")
+    DB.execute("CREATE TABLE IF NOT EXISTS rx (t REAL, rssi REAL, snr REAL)")             # every received packet's signal: the day summary needs it after a restart
+    DB.execute("CREATE INDEX IF NOT EXISTS rx_t ON rx (t)")
     DB.commit()
+
+
+HOOKS = collections.defaultdict(list)                  # name -> [callables]; ops modules (store, link) register here, core never imports them
+
+
+def hook(name, *a):
+    for f in list(HOOKS[name]):
+        try:
+            f(*a)
+        except Exception as e:                           # a recording problem must never stop the radio path
+            print("hook %s failed: %s" % (name, e))
 
 
 def audit(user, action, detail=""):
@@ -89,7 +113,32 @@ STATE = {"latest": {}, "rssi": collections.deque(maxlen=600), "counters": collec
 SERIES = {"hk": collections.deque(maxlen=5000), "beacon": collections.deque(maxlen=5000)}
 
 
+RAW = collections.deque(maxlen=3000)                 # every line the ground station printed (the "raw log" screen)
+_raw_n = [0]
+
+
+def raw_since(t0, n=300):
+    return [r for r in list(RAW) if r["t"] >= t0][-n:]
+
+
+def raw_log(t, txt):
+    txt = txt.rstrip("\r\n")[:600]
+    if not txt.strip():
+        return
+    r = {"t": round(t, 3), "text": txt}
+    RAW.append(r)
+    with DBL:
+        DB.execute("INSERT INTO raw VALUES (?,?)", (r["t"], txt))
+        _raw_n[0] += 1
+        if _raw_n[0] % 500 == 0:                                       # keep the newest 30000 lines
+            DB.execute("DELETE FROM raw WHERE rowid <= (SELECT MAX(rowid) FROM raw) - 30000")
+        DB.commit()
+    BUS.publish("raw", line=r)
+    hook("raw", r)
+
+
 def on_gs_line(t, txt):
+    raw_log(t, txt)
     for e in ev_mod.parse_gs_line(txt):
         k = e["kind"]
         if k == "camera":
@@ -98,6 +147,13 @@ def on_gs_line(t, txt):
                 STATE["last_contact"] = t
             except (TypeError, ValueError):
                 pass
+            continue
+        if k == "cwraw" and e.get("type") == "CWCAR" and (e.get("ms") or 0) >= 300 and e.get("rssi") is not None:
+            # a tuning carrier of at least 300 ms is the start of a CW beacon: count it as a signal heard (contact + received signal),
+            # also when the characters are too weak to decode. No SNR is measured for it.
+            STATE["rssi"].append((t, e["rssi"], None))
+            STATE["last_contact"] = t
+            BUS.publish("evt", ev={"kind": "rssi", "t": round(t, 3), "rssi": e["rssi"], "snr": None, "src": "cw"})
             continue
         if k in ("cwraw", "rate", "hkdet"):
             continue
@@ -112,10 +168,17 @@ def on_gs_line(t, txt):
         if k in SERIES:
             SERIES[k].append(e)
         BUS.publish("evt", ev=e)
+        hook("event", e)
+
+
+_gs_last = {"up": None, "err": None}
 
 
 def on_gs_state(up, port, err):
     BUS.publish("link", connected=up, port=port, error=err)
+    if _gs_last["up"] != up or (not up and _gs_last["err"] != err):             # every change of the ground-station connection is a record for the day summary
+        _gs_last.update(up=up, err=err)
+        audit("system", "ground station connected" if up else "ground station disconnected", "%s %s" % (port or "", err or "")[:200])
 
 
 GS = None                                            # created in main(): the serial port is only touched once the program is started
@@ -125,36 +188,111 @@ GS = None                                            # created in main(): the se
 # PA, PWR, CARRIER, BURST, RATE, AUTO, dummy camera) are deliberately not offered here.
 CATALOG = [
     {"id": "health", "label": "Health / housekeeping 1", "group": "Telemetry", "gs": "HK1", "role": "operator", "wait_s": 90,
-     "help": "Voltages, temperatures and gyro / magnetometer (128-byte housekeeping packet)."},
-    {"id": "hk2", "label": "Housekeeping 2", "group": "Telemetry", "gs": "HK2", "role": "operator", "wait_s": 90, "help": "Currents and flags."},
+     "help": "Requests the 128-byte housekeeping packet: bus and battery voltages, temperatures, currents and inertial / magnetic readings."},
+    {"id": "hk2", "label": "Housekeeping 2", "group": "Telemetry", "gs": "HK2", "role": "operator", "wait_s": 90, "help": "Requests the latest stored housekeeping record (currents and flags)."},
     {"id": "hkdl", "label": "Stored housekeeping download", "group": "Telemetry", "gs": "D {count}", "role": "operator", "wait_s": 240,
-     "args": [{"name": "count", "label": "records", "default": 5, "min": 1, "max": 100}], "help": "Records stored in the OBC flash."},
-    {"id": "ping", "label": "Ping the OBC", "group": "Link", "gs": "PING", "role": "operator", "wait_s": 90, "help": "Is the on-board computer answering?"},
-    {"id": "adcs", "label": "ADCS telecommand", "group": "Subsystems", "gs": "ADCS", "role": "operator", "wait_s": 90, "help": ""},
-    {"id": "epdm", "label": "EPDM telecommand", "group": "Subsystems", "gs": "EPDM", "role": "operator", "wait_s": 90, "help": ""},
+     "args": [{"name": "count", "label": "records", "default": 5, "min": 1, "max": 100}], "help": "Downloads stored housekeeping records from the on-board flash."},
+    {"id": "ping", "label": "Ping the OBC", "group": "Link", "gs": "PING", "role": "operator", "wait_s": 90,
+     "help": "Is the on-board computer answering? The satellite replies ACK accepted, the text \"ACK: PING OK (OBC_ONLINE)\" and ACK completed."},
+    {"id": "adcs", "label": "Run the ADCS mission", "group": "Missions", "gs": "ADCS", "role": "operator", "critical": True, "wait_s": 120,
+     "help": "Starts the attitude determination and control (ADCS) mission, MCU 03, using the command defined in the reference firmware. The satellite acknowledges the command; no data is returned with it. Results are read from the ADCS data file."},
+    {"id": "epdm", "label": "Run the EPDM mission", "group": "Missions", "gs": "EPDM", "role": "operator", "critical": True, "wait_s": 120,
+     "help": "Starts the EPDM mission (earthquake precursor detection: magnetic-field precursor measurements), MCU 05, using the command defined in the reference firmware. The satellite acknowledges the command; no data is returned with it. Results are read from the EPDM data file."},
+    {"id": "adcs_file", "label": "ADCS file download (adcs.txt, F7)", "group": "Data files", "gs": "ADCSFILE {count}", "role": "operator", "wait_s": 240, "args": [{"name": "count", "label": "pieces of 128 bytes", "default": 5, "min": 1, "max": 100}],
+     "help": "Downloads adcs.txt (file F7 of the Packet Format file table). The content format is not final; it is displayed as decoded text."},
+    {"id": "epdm_file", "label": "EPDM file download (epdm.txt, F6)", "group": "Data files", "gs": "EPDMFILE {count}", "role": "operator", "wait_s": 240, "args": [{"name": "count", "label": "pieces of 128 bytes", "default": 5, "min": 1, "max": 100}],
+     "help": "Downloads epdm.txt (file F6 of the Packet Format file table). The content format is not final; it is displayed as decoded text."},
+    {"id": "satlog", "label": "Satellite log download (sat_log.txt, F3)", "group": "Data files", "gs": "SATLOG {count}", "role": "operator", "wait_s": 240, "args": [{"name": "count", "label": "pieces of 128 bytes", "default": 5, "min": 1, "max": 100}],
+     "help": "Downloads sat_log.txt (file F3), the satellite event log."},
+    {"id": "flags", "label": "Flags file download (flags.txt, F1)", "group": "Data files", "gs": "FLAGS {count}", "role": "operator", "wait_s": 240, "args": [{"name": "count", "label": "pieces of 128 bytes", "default": 5, "min": 1, "max": 100}],
+     "help": "Downloads flags.txt (file F1)."},
+    {"id": "rsvtable", "label": "Reserved table download (rsv_table.txt, F4)", "group": "Data files", "gs": "RSVTABLE {count}", "role": "operator", "wait_s": 240, "args": [{"name": "count", "label": "pieces of 128 bytes", "default": 5, "min": 1, "max": 100}],
+     "help": "Downloads rsv_table.txt (file F4)."},
     {"id": "cam_run", "label": "Camera: take a picture", "group": "Camera", "gs": "SNAP", "role": "operator", "critical": True, "wait_s": 240,
-     "help": "Camera ON, real photo through the OBC."},
+     "help": "Starts the camera mission: the on-board computer captures an image and stores it."},
     {"id": "cam_dl", "label": "Camera: downlink the stored picture", "group": "Camera", "gs": "CAM", "role": "operator", "critical": True, "wait_s": 600,
-     "help": "Fragments are stored and the picture is rebuilt while they arrive (Imagery page)."},
+     "help": "Transfers the stored image to the ground. Fragments are assembled automatically in the Images view."},
+    {"id": "dummycam", "label": "Camera: dummy test picture", "group": "Camera", "gs": "DUMMYCAM", "role": "operator", "critical": True, "wait_s": 600,
+     "help": "Transfers the on-board test image (69 fragments) without capturing a new one. Used to verify the imaging chain."},
     {"id": "digi", "label": "Digipeater message", "group": "Digipeater", "gs": "DIGI {text}", "role": "operator", "critical": True, "wait_s": 5,
-     "args": [{"name": "text", "label": "SRC>DEST,VIA:text", "default": "9N2SJ>APZS2S,ARISS:>S2S2 test"}],
-     "help": "One AX.25 UI frame the satellite digipeater repeats on the downlink."},
+     "args": [{"name": "text", "label": "SRC>DEST,VIA:text", "default": "9N2SJ>APZS2S,APNDIG:>S2S2 test"}],
+     "help": "Transmits one AX.25 UI frame that the satellite digipeater may repeat on the downlink."},
     {"id": "antenna", "label": "Antenna deployment", "group": "Deployment", "gs": "ANT", "role": "admin", "critical": True, "wait_s": 240,
-     "help": "Burns the antenna release wire. Irreversible."},
+     "help": "Activates the antenna release mechanism. This action is irreversible."},
 ]
+# Plain-language names for people who are new to the software, the over-the-air opcode of the Packet Format sheet (hex, as the
+# satellite sees it: SAT-ID, MCU id, opcode B1..B3; the data-id / address / count fields follow) and an icon.
+SIMPLE = {
+    "health": ("Health report", "HK", "53 01 1D D1 F2", "ACK accepted, one 128-byte housekeeping packet, ACK completed."),
+    "hk2": ("Housekeeping record", "HK", "53 01 1D D1 F8", "ACK accepted, stored housekeeping data in 128-byte blocks, ACK completed."),
+    "hkdl": ("Stored housekeeping download", "HKD", "53 01 1D D1 F8", "ACK accepted, stored housekeeping data in 128-byte blocks, ACK completed."),
+    "ping": ("Link test (ping)", "PING", "53 01 1D D1 F5", "ACK accepted, the text \"ACK: PING OK (OBC_ONLINE)\", ACK completed."),
+    "adcs": ("ADCS mission start", "ADCS", "53 03 A0 53 CF", "ACK accepted, ACK completed. No data packet is part of the response."),
+    "epdm": ("EPDM mission start", "EPDM", "53 05 EC CF CF", "ACK accepted, ACK completed. No data packet is part of the response."),
+    "adcs_file": ("ADCS data file (adcs.txt)", "ADCS", "53 01 1D D2 F7", "ACK accepted, the file in 128-byte blocks, ACK completed; NACK 05 if the file is not present."),
+    "epdm_file": ("EPDM data file (epdm.txt)", "EPDM", "53 01 1D D2 F6", "ACK accepted, the file in 128-byte blocks, ACK completed; NACK 05 if the file is not present."),
+    "satlog": ("Satellite log (sat_log.txt)", "LOG", "53 01 1D D1 F3", "ACK accepted, the file in 128-byte blocks, ACK completed; NACK 05 if the file is not present."),
+    "flags": ("Status flags (flags.txt)", "FLG", "53 01 1D D1 F1", "ACK accepted, the file in 128-byte blocks, ACK completed; NACK 05 if the file is not present."),
+    "rsvtable": ("Reserved table (rsv_table.txt)", "RSV", "53 01 1D D1 F4", "ACK accepted, the file in 128-byte blocks, ACK completed; NACK 05 if the file is not present."),
+    "cam_run": ("Capture image", "CAM", "53 04 CC 5E BD", "ACK accepted, ACK completed. The image stays in on-board storage until downloaded."),
+    "cam_dl": ("Download stored image", "IMG", "53 01 1D D2 F5", "ACK accepted, the image in 69 fragments, ACK completed; NACK 05 if no image is stored."),
+    "dummycam": ("Test image downlink", "TST", "53 04 CC 5E BE", "ACK accepted, the on-board test image in 69 fragments, ACK completed."),
+    "digi": ("Digipeater test frame", "DIGI", "", "One-way transmission. The satellite repeats the frame on the downlink if the digipeater rules accept it."),
+    "antenna": ("Antenna deployment", "ANT", "53 01 DE EF AA", "ACK accepted, ACK completed."),
+}
+HELP = {   # operator-facing descriptions (professional wording); the first sentence is shown on the command cards
+    "health": "Requests the 128-byte housekeeping packet: bus and battery voltages, temperatures, currents and inertial / magnetic readings.",
+    "hk2": "Requests the latest stored housekeeping record (currents and flags).",
+    "hkdl": "Downloads stored housekeeping records from the on-board flash.",
+    "ping": "Verifies that the on-board computer responds. The satellite acknowledges and returns a status text.",
+    "adcs": "Starts the attitude determination and control (ADCS) mission, MCU 03, with the command defined in the reference firmware. The satellite acknowledges the command; no data is returned with it. Results are read from the ADCS data file.",
+    "epdm": "Starts the EPDM mission (earthquake precursor detection: magnetic-field precursor measurements), MCU 05, with the command defined in the reference firmware. The satellite acknowledges the command; no data is returned with it. Results are read from the EPDM data file.",
+    "adcs_file": "Downloads adcs.txt (file F7 of the Packet Format file table). The content format is not final; it is displayed as decoded text.",
+    "epdm_file": "Downloads epdm.txt (file F6 of the Packet Format file table). The content format is not final; it is displayed as decoded text.",
+    "satlog": "Downloads sat_log.txt (file F3), the satellite event log.",
+    "flags": "Downloads flags.txt (file F1).",
+    "rsvtable": "Downloads rsv_table.txt (file F4).",
+    "cam_run": "Starts the camera mission: the on-board computer captures an image and stores it.",
+    "cam_dl": "Transfers the stored image to the ground. Fragments are assembled automatically in the Images view.",
+    "dummycam": "Transfers the on-board test image (69 fragments) without capturing a new one. Used to verify the imaging chain.",
+    "digi": "Transmits one AX.25 UI frame that the satellite digipeater may repeat on the downlink.",
+    "antenna": "Activates the antenna release mechanism. This action is irreversible.",
+}
+for _c in CATALOG:
+    _c["help"] = HELP[_c["id"]]
+    _c["simple"], _c["icon"], _c["opcode"], _c["reply"] = SIMPLE[_c["id"]]
 JOBS = {}
 JQ = queue.Queue()
+TX = threading.Lock()                                # one radio transmission sequence at a time (commands, heartbeat)
 CUR = {"id": None, "abort": threading.Event()}
+
+
+def rssi_near(t, window=25.0):
+    """The received-signal sample (rssi dBm, snr dB) closest to time t, if one lies within `window` seconds."""
+    best = None
+    for (ts, rs, sn) in list(STATE["rssi"]):
+        if abs(ts - t) <= window and (best is None or abs(ts - t) < abs(best[0] - t)):
+            best = (ts, rs, sn)
+    return {"t": best[0], "rssi": best[1], "snr": best[2]} if best else None
+
+
+TERMINAL = ("completed", "nack", "timeout", "incomplete", "cancelled", "error", "sent")
 
 
 def job_update(jid, **kw):
     j = JOBS[jid]
     j.update(kw)
+    if j["state"] in TERMINAL and "rssi" not in j.setdefault("detail", {}):
+        acks = [e["t"] for e in (j["detail"].get("events") or []) if e.get("kind") in ("ack", "nack")]
+        j["detail"]["rssi"] = {"at_send": rssi_near(j["t"]), "at_response": rssi_near(min(acks)) if acks else None}
+    j.setdefault("detail", {})["raw"] = raw_since(j["t"] - 0.5, 200)   # what the ground station printed since the command was queued
     with DBL:
         DB.execute("UPDATE commands SET state=?, detail=?, t_end=? WHERE id=?",
                    (j["state"], json.dumps(j.get("detail", {}), default=str), j.get("t_end"), jid))
         DB.commit()
     BUS.publish("command", job=public_job(j))
+    if j["state"] in TERMINAL:
+        hook("job_done", public_job(j))
 
 
 def public_job(j):
@@ -182,14 +320,15 @@ def submit(user, cid, args):
         cur = DB.execute("INSERT INTO commands (t,user,cmd,line,state,detail) VALUES (?,?,?,?,?,?)", (now(), user, cid, line, "queued", "{}"))
         DB.commit()
         jid = cur.lastrowid
-    JOBS[jid] = {"id": jid, "t": now(), "user": user, "cmd": cid, "label": c["label"], "line": line, "state": "queued", "detail": {}, "wait_s": c["wait_s"]}
+    JOBS[jid] = {"id": jid, "t": now(), "user": user, "cmd": cid, "label": c["label"], "simple": c["simple"], "icon": c["icon"], "opcode": c["opcode"],
+                 "line": line, "state": "queued", "detail": {}, "wait_s": c["wait_s"]}
     JQ.put(jid)
     BUS.publish("command", job=public_job(JOBS[jid]))
     return jid
 
 
 def _events_since(t0):
-    return [e for e in EVENTS.recent(limit=600) if e["t"] >= t0 and e["kind"] in ("ack", "nack", "hk", "beacon")]
+    return [e for e in EVENTS.recent(limit=600) if e["t"] >= t0 and e["kind"] in ("ack", "nack", "hk", "beacon", "cw", "file", "ascii")]
 
 
 def run_job(jid):
@@ -251,7 +390,8 @@ def worker():
         jid = JQ.get()
         if JOBS[jid]["state"] == "cancelled":
             continue
-        run_job(jid)
+        with TX:
+            run_job(jid)
 
 
 threading.Thread(target=worker, daemon=True).start()
@@ -276,7 +416,31 @@ def series(kind, n):
 def history_jobs(n=100):
     with DBL:
         rows = DB.execute("SELECT id,t,user,cmd,line,state,detail,t_end FROM commands ORDER BY id DESC LIMIT ?", (n,)).fetchall()
-    return [{"id": r[0], "t": r[1], "user": r[2], "cmd": r[3], "line": r[4], "state": r[5], "detail": json.loads(r[6] or "{}"), "t_end": r[7]} for r in rows]
+    out = []
+    for r in rows:
+        c = next((x for x in CATALOG if x["id"] == r[3]), {})
+        out.append({"id": r[0], "t": r[1], "user": r[2], "cmd": r[3], "label": c.get("label", r[3]), "simple": c.get("simple", r[3]), "icon": c.get("icon", ""),
+                    "opcode": c.get("opcode", ""), "line": r[4], "state": r[5], "detail": json.loads(r[6] or "{}"), "t_end": r[7]})
+    return out
+
+
+def rawlog(n=500, q="", kind=""):
+    sql, a = "SELECT t,text FROM raw", []
+    cond = []
+    if q:
+        cond.append("text LIKE ?")
+        a.append("%" + q + "%")
+    pat = {"beacon": "%CW%", "command": "%UPLINK%", "radio": "%[GS RX]%", "ack": "%ACK%"}.get(kind)
+    if pat:
+        cond.append("text LIKE ?")
+        a.append(pat)
+    if cond:
+        sql += " WHERE " + " AND ".join(cond)
+    sql += " ORDER BY rowid DESC LIMIT ?"
+    a.append(max(1, min(int(n), 5000)))
+    with DBL:
+        rows = DB.execute(sql, a).fetchall()
+    return [{"t": r[0], "text": r[1]} for r in rows][::-1]
 
 
 def csv_export(kind):
@@ -315,3 +479,7 @@ def init(gs_port=None):
     global AUTH, GS
     AUTH = authz.Auth(os.path.join(DATA, "users.json"), True, "Mission Control")
     GS = GSLink(on_gs_line, on_gs_state, want=gs_port)
+    from mc import gdrive, link, store                  # imported here: they import core
+    store.start()
+    gdrive.start()
+    link.start()

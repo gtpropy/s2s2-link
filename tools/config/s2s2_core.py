@@ -54,7 +54,7 @@ DEFAULT_CONFIG = {
     # radio and timing
     "downlink_hz": 435000000, "uplink_hz": 437375000, "cw_unit_ms": 60, "beacon_period_s": 90,
     # digipeater (satellite): repeats other stations' AX.25 UI frames, see docs/DIGIPEATER.md
-    "digi": True, "digi_alias": "ARISS", "digi_wide": True, "digi_max_n": 2, "digi_trace": True,
+    "digi": True, "digi_alias": "APNDIG", "digi_wide": True, "digi_max_n": 2, "digi_trace": True,
     "digi_dedupe_s": 30, "digi_rate_per_min": 6, "digi_burst": 2, "digi_src_min_s": 10,
     # store-and-forward: keep repeated frames (journal in CPU1 flash) and send them again later, hop budget from the WIDEn-N path
     "saf": True, "saf_immediate": True, "saf_append_stats": False, "saf_max_fwd": 3, "saf_fwd_interval_s": 900, "saf_ttl_min": 360,
@@ -169,7 +169,7 @@ MENUS = {
     "digi": ("Digipeater and store and forward", [
         _i("bool", "digi", "DIGI: repeat other stations' AX.25 UI frames",
            "Frames with a digipeater path and a good FCS are judged by the digipeater instead of the command logic. Costs about 5 KB of flash."),
-        _i("str", "digi_alias", "Alias besides our call sign", "ARISS or empty. 1-6 characters A-Z / 0-9.", upper=True, dep=["digi"]),
+        _i("str", "digi_alias", "Alias besides our call sign", "APNDIG or empty. 1-6 characters A-Z / 0-9.", upper=True, dep=["digi"]),
         _i("bool", "digi_wide", "Answer WIDE2-N paths", "WIDE2 is the wide-area tier a satellite belongs to; WIDE1-1 is for ground fill-in digipeaters.", dep=["digi"]),
         _i("bool", "digi_trace", "Trace: put our call sign into WIDE2-N paths", "New-N trace: NODE*,WIDE2-1.", dep=["digi"]),
         _i("int", "digi_max_n", "Highest WIDE2-N accepted", "1-7. Flooding control: a satellite footprint is huge, so keep it at 2.", lo=1, hi=7, dep=["digi"]),

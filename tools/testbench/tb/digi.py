@@ -16,7 +16,7 @@ DIGI_REASONS = ["repeated", "disabled", "malformed", "not a UI frame", "no unuse
 
 def digi_identity():
     """Satellite call sign / SSID / alias as configured in the TUI (.s2s2.config), defaults if the file is missing."""
-    c = {"sat_call": "9N2SJ", "sat_ssid": 1, "digi_alias": "ARISS"}
+    c = {"sat_call": "9N2SJ", "sat_ssid": 1, "digi_alias": "APNDIG"}
     try:
         c.update({k: v for k, v in json.load(open(os.path.join(ROOT, ".s2s2.config"))).items() if k in c})
     except (OSError, ValueError):

@@ -21,7 +21,7 @@ static uint8_t s_radio_pa_select = SAT_PA_SEL; /* Satellite routes SX1262 RFO_LP
 
 void RadioApp_SetTxPower(int8_t power)
 {
-    if (power > 14) power = 14;
+    if (power > SAT_TX_DBM_MAX) power = SAT_TX_DBM_MAX;
     if (power < -17) power = -17;
     s_radio_tx_power_dbm = power;
 }

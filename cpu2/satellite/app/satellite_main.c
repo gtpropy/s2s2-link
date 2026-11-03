@@ -50,7 +50,7 @@ const RadioConfig_t SatelliteProfile = {
 };
 
 #define BURST_PACKET_COUNT      50
-#define TX_TIMEOUT_MS           
+#define TX_TIMEOUT_MS           1000
 
 /* 50-second command listen window between CW1 and CW2 as requested. */
 #define SAT_LISTEN_DURATION_MS  (50UL * 1000UL)  /* nominal listen time (log text only) */
@@ -87,6 +87,8 @@ typedef enum {
     STATE_COMMAND_LISTEN,
     STATE_DOWNLINK,
 } AppState_t;
+
+
 
 volatile AppState_t app_state = STATE_CW;
 
@@ -190,6 +192,7 @@ static void Cw_Beacon1_Hex(char *out, size_t n)
     Cw_Hex8(out, n, b);
 }
 
+
 static void Cw_Beacon2_Hex(char *out, size_t n)
 {
     uint8_t b[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };             /* gyro x,y,z, magnetometer x,y,z, solar cells: no data from the M4 */
@@ -232,14 +235,24 @@ static inline __attribute__((unused)) bool Sat_Callsign_Char_OK(uint8_t shifted)
  * Telecommand classification (13-byte and 8-byte 0x53 frames). Used BOTH when the command
  * is first validated and in STATE_DOWNLINK.
  */
-/* CHANGED: strict opcode table of the "Packet Format" command sheet (13 bytes: SAT-ID 53, MCU ID, opcode B1..B3, DATA_ID,
- * ADDRESS, NO OF PACKETS). Everything else (the old loose data-id / mcu-id matches, ping, dummy camera, ADCS, EPDM) is an
- * invalid command and is answered with NACK 0xEE 0x09.
- *   53 04 CC 5E BD  run camera mission      53 01 1D D2 F5  download image (CAM DOWNLOAD)
- *   53 01 1D D1 F2  HEALTH SAT (sat_health) 53 01 1D D1 F8  housekeeping download
- *   53 01 DE EF AA  antenna deployment */
+/* Strict opcode table of the "Packet Format" command sheet (13 bytes: SAT-ID 53, MCU ID, opcode B1..B3, DATA_ID, ADDRESS,
+ * NO OF PACKETS). Everything else is an invalid command and is answered with NACK 0xEE 0x09.
+ *   53 04 CC 5E BD  run camera mission
+ *   53 01 1D Dd Ff  file download, from the file table of the sheet (directory D1/D3 or D2/D4, file number F1..F8):
+ *       F1 flags.txt      D1/D3        F5 cam.txt   (CAM DOWNLOAD)  D2/D4
+ *       F2 sat_health.txt D1/D3 (HEALTH SAT)   F6 epdm.txt   D2/D4   (earthquake precursor detection mission)
+ *       F3 sat_log.txt    D1/D3        F7 adcs.txt  D2/D4
+ *       F4 rsv_table.txt  D1/D3        F8 housekeeping download  D1
+ *   53 01 1D D1 F5  ping (ACK, "ACK: PING OK (OBC_ONLINE)", ACK)   53 04 CC 5E BE  dummy camera test (stored test image from the OBC)
+ *   53 01 DE EF AA  antenna deployment
+ *   53 03 A0 53 CF  run the ADCS mission, 53 05 EC CF CF  run the EPDM mission (earthquake precursor detection): MCU id 03 / 05 as in the
+ *                   reference firmware (github.com/PrmBRana/dummy-camera-live, satellite_main.c: c->adcs / c->epdm); ACK accepted, forwarded, ACK completed */
 typedef struct {
     bool flash, cam_on, cam_download, hk, antenna;
+    bool adcs, epdm;
+    bool ping, dummy_cam;         /* reference firmware: ping 53 01 1D D1 F5, dummy camera test 53 04 CC 5E BE (the OBC owns the test image) */
+    bool file_dl;                 /* F1, F3, F4, F6, F7: a file of the file table, served by the OBC through the flash ring */
+    uint8_t file_mission;         /* mission id of the ACK / NACK for that file */
 } SatTcClass_t;
 
 static void Sat_Classify_Telecommand(const uint8_t *p, uint16_t plen, SatTcClass_t *c)
@@ -250,15 +263,29 @@ static void Sat_Classify_Telecommand(const uint8_t *p, uint16_t plen, SatTcClass
     const bool obc = (p[1] == 0x01);
     const bool cam = (p[1] == CMD_TYPE_CAMERA);
     c->cam_on       = cam && p[2] == 0xCC && p[3] == 0x5E && p[4] == 0xBD;
-    c->cam_download = obc && p[2] == 0x1D && p[3] == 0xD2 && p[4] == 0xF5;
-    c->hk           = obc && p[2] == 0x1D && p[3] == 0xD1 && p[4] == 0xF2;
-    c->flash        = obc && p[2] == 0x1D && p[3] == 0xD1 && p[4] == 0xF8;
     c->antenna      = obc && p[2] == 0xDE && p[3] == 0xEF && p[4] == 0xAA;
+    c->dummy_cam    = cam && p[2] == 0xCC && p[3] == 0x5E && p[4] == 0xBE;
+    c->adcs         = (p[1] == CMD_TYPE_ADCS);       /* the reference accepts any command addressed to MCU 03 / 05 */
+    c->epdm         = (p[1] == CMD_TYPE_EPDM);
+    if (!obc || p[2] != 0x1D) return;
+
+    const uint8_t dir = p[3], file = p[4];
+    const bool d13 = (dir == 0xD1 || dir == 0xD3);      /* "D1/D3" of the file table */
+    const bool d24 = (dir == 0xD2 || dir == 0xD4);      /* "D2/D4" */
+    c->ping         = dir == 0xD1 && file == 0xF5;
+    c->hk           = d13 && file == 0xF2;
+    c->cam_download = d24 && file == 0xF5;
+    c->flash        = dir == 0xD1 && file == 0xF8;
+    if (d13 && file == 0xF1) { c->file_dl = true; c->file_mission = SAT_MISSION_UNKNOWN; }   /* flags.txt */
+    if (d13 && file == 0xF3) { c->file_dl = true; c->file_mission = SAT_MISSION_LOG; }       /* sat_log.txt */
+    if (d13 && file == 0xF4) { c->file_dl = true; c->file_mission = SAT_MISSION_UNKNOWN; }   /* rsv_table.txt */
+    if (d24 && file == 0xF6) { c->file_dl = true; c->file_mission = SAT_MISSION_EPDM; }      /* epdm.txt */
+    if (d24 && file == 0xF7) { c->file_dl = true; c->file_mission = SAT_MISSION_ADCS; }      /* adcs.txt */
 }
 
 static bool Sat_Tc_Is_Known(const SatTcClass_t *c)
 {
-    return c->flash || c->cam_on || c->cam_download || c->hk || c->antenna;
+    return c->flash || c->cam_on || c->cam_download || c->hk || c->antenna || c->file_dl || c->adcs || c->epdm || c->ping || c->dummy_cam;
 }
 
 static bool Sat_Tc_Is_Valid(const SatTcClass_t *c, const uint8_t *p, uint16_t plen)
@@ -1173,7 +1200,7 @@ int main(void) {
                                     app_state = STATE_DOWNLINK;
                                     break;
                                 } else if (strcasecmp(s_uart_cmd_line, "CAM") == 0 || strcasecmp(s_uart_cmd_line, "DUMMY") == 0) {
-                                    static const uint8_t dummy_cmd[13] = {0x53, 0x04, 0xCC, 0x5E, 0xBD, 0,0,0,0,0,0,0,0};   /* CHANGED: sheet opcode (was ...BE dummy camera) */
+                                    static const uint8_t dummy_cmd[13] = {0x53, 0x04, 0xCC, 0x5E, 0xBE, 0, 0xD0, 0,0,0,0,0, 0x45};   /* dummy camera test, as the reference firmware */
                                     memcpy(s_pending_cmd, dummy_cmd, 13);
                                     s_pending_cmd_len = 13;
                                     strncpy(s_pending_src_cs, S2S2_GS_CALLSIGN, sizeof(s_pending_src_cs) - 1);
@@ -1296,10 +1323,12 @@ int main(void) {
                         /* ---- ACK Accepted (AC 00 mission) is sent FIRST, ACK Completed (AC 01 mission) LAST;
                          * an error ends the command with NACK (EE err mission) instead of Completed. ---- */
 
-                        if (tcc.flash) {                         /* 53 01 1D D1 F8: housekeeping download */
-                            uart1_printf("\r\n>>> [M0+ DOWNLINK] HOUSEKEEPING DOWNLOAD: addr=0x%08lX pkts=%u <<<\r\n",
+                        if (tcc.flash || tcc.file_dl) {          /* 53 01 1D D1 F8 housekeeping download, or a file of the file table (F1 F3 F4 F6 F7) */
+                            const uint8_t fmis = tcc.flash ? SAT_MISSION_HK : tcc.file_mission;
+                            uart1_printf("\r\n>>> [M0+ DOWNLINK] %s: file F%X addr=0x%08lX pkts=%u <<<\r\n",
+                                         tcc.flash ? "HOUSEKEEPING DOWNLOAD" : "FILE DOWNLOAD", payload_ptr[4] & 0x0F,
                                          (unsigned long)addr, num_pkts);
-                            Satellite_Send_Ack_Accepted(SAT_MISSION_HK);
+                            Satellite_Send_Ack_Accepted(fmis);
                             Sat_Forward_Command_To_M4(payload_ptr, payload_len);
                             {
                                 uint32_t wait_start = HAL_GetTick();
@@ -1310,10 +1339,10 @@ int main(void) {
                             }
                             if (flash_data_empty()) {
                                 uart1_puts("[M0+] M4 delivered no data -> NACK (requested data missing)\r\n");
-                                Satellite_Send_Nack(SAT_ERR_DATA_MISSING, SAT_MISSION_HK);
+                                Satellite_Send_Nack(SAT_ERR_DATA_MISSING, fmis);
                             } else {
                                 Satellite_Handle_Flash_Read(addr, num_pkts);
-                                Satellite_Send_Ack_Completed(SAT_MISSION_HK);
+                                Satellite_Send_Ack_Completed(fmis);
                             }
                         } else if (tcc.cam_download) {           /* 53 01 1D D2 F5: download the stored image */
                             uint16_t cam_pkts = count ? count : 69;
@@ -1391,6 +1420,33 @@ int main(void) {
                                     Satellite_Send_Ack_Completed(SAT_MISSION_HK);
                                 }
                             }
+                        } else if (tcc.ping) {                   /* 53 01 1D D1 F5: ping, as the reference firmware */
+                            uart1_puts("\r\n>>> [M0+ DOWNLINK] PING RESPONSE <<<\r\n");
+                            Satellite_Send_Ack_Accepted(SAT_MISSION_UNKNOWN);
+                            Satellite_Send_Ping_Response();
+                            Satellite_Send_Ack_Completed(SAT_MISSION_UNKNOWN);
+                        } else if (tcc.dummy_cam) {              /* 53 04 CC 5E BE: dummy camera test, 69 chunks of the OBC's test image */
+                            uart1_puts("\r\n>>> [M0+ DOWNLINK] DUMMY CAMERA TEST (69 chunks of the OBC test image) <<<\r\n");
+                            Sat_Forward_Command_To_M4(payload_ptr, payload_len);     /* the M4 owns the image: forward first so the ring fills during the ACK */
+                            Satellite_Send_Ack_Accepted(SAT_MISSION_CAM_RGB);
+                            {
+                                uint32_t wait_start = HAL_GetTick();
+                                while (flash_data_empty() && (HAL_GetTick() - wait_start) < SAT_M4_RESPONSE_TIMEOUT_MS) {
+                                    CPU2_Delay_Ms(10);
+                                }
+                            }
+                            if (flash_data_empty()) {
+                                Satellite_Send_Nack(SAT_ERR_DATA_MISSING, SAT_MISSION_CAM_RGB);
+                            } else {
+                                Satellite_Send_Camera_Image(69, false);
+                                Satellite_Send_Ack_Completed(SAT_MISSION_CAM_RGB);
+                            }
+                        } else if (tcc.adcs || tcc.epdm) {       /* 53 03 ... run the ADCS mission, 53 05 ... run the EPDM mission (as the reference firmware) */
+                            const uint8_t mid = tcc.adcs ? SAT_MISSION_ADCS : SAT_MISSION_EPDM;
+                            uart1_printf("\r\n>>> [M0+ DOWNLINK] %s -> ACK <<<\r\n", tcc.adcs ? "ADCS RUN" : "EPDM RUN");
+                            Satellite_Send_Ack_Accepted(mid);
+                            Sat_Forward_Command_To_M4(payload_ptr, payload_len);
+                            Satellite_Send_Ack_Completed(mid);
                         } else if (tcc.antenna) {                /* 53 01 DE EF AA: antenna deployment (done by the M4) */
                             uart1_puts("\r\n>>> [M0+ DOWNLINK] ANTENNA DEPLOYMENT <<<\r\n");
                             Satellite_Send_Ack_Accepted(SAT_MISSION_UNKNOWN);

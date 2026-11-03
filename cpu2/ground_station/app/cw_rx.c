@@ -15,6 +15,14 @@ static const struct { const char *code; char ch; } k_morse[] =
     {".-.-.-",'.'},{"--..--",','},{"..--..",'?'},{"-..-.",'/'},{"-....-",'-'}
 };
 
+/* ADDED: Morse pattern of one character ('.' and '-'), or NULL; used by the GS transmit test BW CWB */
+const char *CwRx_MorseFor(char c)
+{
+    for (unsigned i = 0; i < sizeof(k_morse) / sizeof(k_morse[0]); i++)
+        if (k_morse[i].ch == c) return k_morse[i].code;
+    return NULL;
+}
+
 static CwRx_EventCb s_cb;
 
 /* Level tracking (dBm * 16, integer only - Cortex-M0+ has no FPU) */

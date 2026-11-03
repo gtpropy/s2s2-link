@@ -15,7 +15,7 @@ extern void SUBGRF_SetBufferBaseAddress(
 
 static RadioConfig_t s_config;
 static bool s_initialized = false;
-static int8_t s_radio_tx_power_dbm = 22;
+static int8_t s_radio_tx_power_dbm = RADIO_TX_POWER_DBM;
 static uint8_t s_radio_pa_select = RFO_HP; /* default RFO_HP (+22 dBm) safe on both STM32WL55JC1 and JC2 */
 
 void RadioApp_SetTxPower(int8_t power)
@@ -499,6 +499,15 @@ void RadioApp_TransmitCarrier(
         (stat.Fields.ChipMode == 6) ? "TX OK" : "OTHER",
         stat.Fields.CmdStatus);
 
+    /* ADDED: radio error flags while the carrier is on (PLL lock / crystal start / PA ramp would mean no RF at the pin) */
+    {
+        RadioError_t err = SUBGRF_GetDeviceErrors();
+        uart2_printf("    Device errors: 0x%04X (PaRamp=%u PllLock=%u XoscStart=%u PllCalib=%u) %s\r\n",
+                     (unsigned)err.Value, (unsigned)err.Fields.PaRamp, (unsigned)err.Fields.PllLock,
+                     (unsigned)err.Fields.XoscStart, (unsigned)err.Fields.PllCalib,
+                     (err.Value == 0) ? "(none)" : "<-- PROBLEM");
+    }
+
     /* 6. Hold for requested duration */
     for (uint32_t s = 0; s < durationSeconds; s++)
     {
@@ -518,4 +527,42 @@ void RadioApp_TransmitCarrier(
         ">>> [RF-TEST] Carrier Complete. Returning to 435 MHz RX <<<\r\n");
 
     RadioApp_StartRx();
+}
+
+/*
+ * ADDED: keyed carrier (Morse / OOK) for the GS transmit test BW CWB. Begin sets up frequency, PA and the RF switch once,
+ * Key(true) starts the unmodulated carrier, Key(false) stops it (radio stays in standby with the switch on TX), End releases.
+ */
+void RadioApp_CwKeyBegin(uint32_t frequencyHz)
+{
+    if (!s_initialized)
+        return;
+    Radio.Standby();
+    SUBGRF_SetStandby(STDBY_XOSC);
+    CPU2_Delay_Ms(10);
+    SUBGRF_SetPacketType(PACKET_TYPE_GFSK);
+    SUBGRF_SetRfFrequency(frequencyHz);
+    if (s_radio_pa_select == RFO_HP) {
+        SUBGRF_SetPaConfig(0x04, 0x07, 0x00, 0x01);
+        SUBGRF_SetTxParams(RFO_HP, s_radio_tx_power_dbm, RADIO_RAMP_200_US);
+    } else {
+        SUBGRF_SetPaConfig(0x04, 0x00, 0x01, 0x01);
+        SUBGRF_SetTxParams(RFO_LP, s_radio_tx_power_dbm, RADIO_RAMP_200_US);
+    }
+    SUBGRF_WriteRegister(REG_DRV_CTRL, 0x7 << 1);
+    SUBGRF_SetSwitch(s_radio_pa_select, RFSWITCH_TX);
+}
+
+void RadioApp_CwKey(bool on)
+{
+    if (on)
+        SUBGRF_SetTxContinuousWave();
+    else
+        SUBGRF_SetStandby(STDBY_XOSC);
+}
+
+void RadioApp_CwKeyEnd(void)
+{
+    SUBGRF_SetStandby(STDBY_XOSC);
+    Radio.Standby();
 }

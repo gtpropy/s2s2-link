@@ -272,12 +272,19 @@ STM32_PROG ?= $(shell which STM32_Programmer_CLI 2>/dev/null || \
 	echo STM32_Programmer_CLI)
 
 BIN = $(BUILD)/$(TARGET).bin
+
+# Board guard (tools/flash/board_guard.py): reads the attached chip over SWD (read-only) before anything is written and stops with
+# "ERROR!! You made a mistake, dont flash nucleo in CUBUS" when it is a CUBUS flight board and the image is not the CUBUS image.
+# No override switch on purpose. docs/CUBUS.md "Flash lock".
+GUARD_IMAGE := $(if $(filter 1,$(CUBUS_ON)),cubus,$(if $(filter satellite,$(TARGET)),nucleo,gs))
+BOARD_GUARD = python3 $(REPO)/tools/flash/board_guard.py $(if $(SERIAL),--serial "$(SERIAL)")
 OPENOCD_FLASH = openocd -f interface/stlink.cfg -c "transport select hla_swd" $(OPENOCD_HLA_SERIAL) -f target/stm32wlx.cfg \
 	-c "reset_config none" -c "program $(BIN) 0x08032000 verify reset exit"
 OPENOCD_FLASH_DAP = openocd -f interface/stlink-dap.cfg $(OPENOCD_HLA_SERIAL) -f target/stm32wlx.cfg \
 	-c "reset_config none" -c "program $(BIN) 0x08032000 verify reset exit"
 
 flash: $(BIN)
+	@$(BOARD_GUARD) --image $(GUARD_IMAGE) --what flash || exit 1
 	@if [ -x "$$(which $(STM32_PROG) 2>/dev/null)" ] || [ -x "$(STM32_PROG)" ]; then \
 	  echo "Flashing $(TARGET_NAME) $(BIN) to 0x08032000 using STM32_Programmer_CLI (CPU1 preserved)..."; \
 	  $(STM32_PROG) -c port=SWD $(STM32PROG_SN) mode=UR -w $(BIN) 0x08032000 -v -hardRst 2>/dev/null || \
@@ -308,6 +315,7 @@ c2boot:
 # CPU1 (Cortex-M4 / NuttX) image: boots CPU2 and runs the telemetry / image source
 flash-m4:
 	@test -f $(NUTTX_BIN) || (echo "Missing $(NUTTX_BIN). Build NuttX first (make nuttx)" && exit 1)
+	@$(BOARD_GUARD) --image nuttx --what flash-m4 || exit 1
 	@echo "Flashing $(NUTTX_BIN) to 0x08000000 (CPU1 / M4)..."
 	@$(STM32_PROG) -c port=SWD $(STM32PROG_SN) mode=UR -w $(NUTTX_BIN) 0x08000000 -v -hardRst 2>/dev/null || \
 	  openocd -f interface/stlink.cfg -c "transport select hla_swd" $(OPENOCD_HLA_SERIAL) \

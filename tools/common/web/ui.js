@@ -14,7 +14,7 @@
   /* ---- format */
   const utc = t => (t ? new Date(t * 1000).toISOString().slice(11, 19) + 'Z' : '–');
   const utcd = t => (t ? new Date(t * 1000).toISOString().slice(0, 19).replace('T', ' ') + 'Z' : '–');
-  const age = t => { if (!t) return '–'; const s = Math.max(0, Date.now() / 1000 - t); return s < 90 ? Math.round(s) + ' s' : s < 5400 ? Math.round(s / 60) + ' min' : (s / 3600).toFixed(1) + ' h'; };
+  const age = t => { if (!t) return '–'; const s = Math.max(0, Date.now() / 1000 - t); return s < 90 ? Math.round(s) + ' s' : s < 5400 ? Math.round(s / 60) + ' min' : s < 172800 ? (s / 3600).toFixed(1) + ' h' : Math.round(s / 86400) + ' days'; };
   const fx = (v, d = 2) => (v == null || Number.isNaN(v) ? '–' : Number(v).toFixed(d));
 
   /* ---- widgets */

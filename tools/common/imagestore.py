@@ -71,7 +71,7 @@ class Session:
                 "t_first": round(self.t_first, 2), "t_last": round(self.t_last, 2),
                 "seconds": round((self.t_done or self.t_last) - self.t_first, 1),
                 "matches_sent": self.matches_sent,
-                "missing": [i + 1 for i in range(self.total) if i not in self.frags][:200]}
+                "missing": [i + 1 for i in range(self.total) if i not in self.frags][:2000]}
 
 
 class ImageStore:

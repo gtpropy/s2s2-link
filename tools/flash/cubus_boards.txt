@@ -1,0 +1,4 @@
+# Unique ids (24 hex digits) of CUBUS flight boards that must never get a Nucleo image. Read by tools/flash/board_guard.py.
+# Boards that already run a CUBUS=T image are recognised from their flash and need no entry; boards that still run other firmware
+# (e.g. the reference firmware) need one:  python3 tools/flash/board_guard.py --register-cubus   (only that board connected)
+# One id per line, text after '#' is a comment.

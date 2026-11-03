@@ -73,6 +73,22 @@ Same radio, framing, protocol and mission logic as every other build. Only board
 
 CPU1 side: `apps/examples/s2s2obc` has a Kconfig switch `EXAMPLES_S2S2OBC_LEDS` (default y, set in `nuttx/.config`); with it off the app never touches PB15 / PB9 / PB11.
 
+## Flash lock: no Nucleo image on the CUBUS board (2026-10-12)
+
+`make flash` and `make flash-m4` (all routes: root Makefile, TUI, `cd cpu2/<image> && make flash`, testbench Build page) first run `tools/flash/board_guard.py`.
+It reads the attached chip over SWD, read-only (same bare MEM-AP method as `swd_rx_check.sh`: no reset, no halt, no write, 500 kHz; the script is scanned for write / reset / halt /
+flash commands before OpenOCD starts), and calls the board a CUBUS when
+1. the CPU2 flash contains the word `0xB0A2D003` (`g_boardId` of a CUBUS=T image), or
+2. its 96-bit unique id is listed in `tools/flash/cubus_boards.txt` (for a board that still runs other firmware, e.g. the reference one:
+   `python3 tools/flash/board_guard.py --register-cubus` with only that board connected).
+
+On a CUBUS board only the CUBUS CPU2 image (`make flash sat CUBUS=T`) is allowed. A Nucleo satellite image, the ground-station image and the NuttX CPU1 app (`flash-m4`) are
+refused: the guard prints `ERROR!! You made a mistake, dont flash nucleo in CUBUS`, exits 1 and `make` stops before any flash tool starts. If the board cannot be read
+(no probe, no answer, readout protection) the flash is locked as well. There is no override switch; to flash a board that was registered by mistake, delete its line from the registry.
+`python3 tools/flash/board_guard.py --status` only reports what is detected. Not covered: `make c2boot` (option bytes, same value the flight board already has) and tools that call
+STM32_Programmer_CLI / OpenOCD directly. Tested without hardware by `tests/host/test_board_guard.py` (stub `openocd`; a real `make flash` of the Nucleo image, the GS image and `flash-m4`
+against a stub CUBUS board stops with the error). The SWD read ran on a Nucleo (the GS, 2026-10-12: unique id and flash scan work, verdict "not CUBUS"); not yet run on the CUBUS board itself.
+
 ## Check (no hardware): `tests/host/test_cubus_pins.py`
 
 Part of `make test`. It resolves the `SAT_CUBUS` conditionals of every satellite and common source and fails on any GPIO call or register access that is not on the allow list

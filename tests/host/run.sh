@@ -7,6 +7,8 @@
 #   test_testbench_analysis  beacon period / listen window / fuzz frame / byte-compare helpers of the testbench tests
 #   test_testbench_features  trends / report diff, scenario validation + engine, log store search / regex / CSV, alerts
 #   test_testbench_cubus  CUBUS DEBUG section of the testbench: g_satRx / GPIO / ring decoders, diagnosis per stage, UART stage counts, test gating
+#   test_board_guard flash lock: a Nucleo / GS / NuttX image is refused on a CUBUS board (stub openocd, no hardware)
+#   test_mission_control  TLE checking + browser orbit maths (satellite.js in node) of Mission Control
 #   test_attitude   attitude cube math of the web tools (node)
 #   test_cubus_pins CUBUS pin ownership: only the radio pins may be touched (source scan + a CUBUS image build)
 #   digi_chain      satellite digipeater chain with the real framing code, repeats decoded by Dire Wolf at 4800 bit/s G3RUH
@@ -26,6 +28,10 @@ python3 test_testbench_analysis.py
 python3 test_testbench_features.py
 python3 test_testbench_cubus.py
 python3 test_cubus_pins.py
+python3 test_board_guard.py
+python3 test_packet_format.py
+python3 test_gs_store.py
+if command -v node >/dev/null 2>&1; then python3 test_mission_control.py; else echo "mission control test skipped: node not installed"; fi
 if command -v node >/dev/null 2>&1; then node test_attitude.js; else echo "attitude test skipped: node not installed"; fi
 if command -v atest >/dev/null 2>&1; then
   [ -x "$ROOT/tools/.venv/bin/python" ] && sh digi_chain.sh || echo "digi_chain skipped: tools/.venv missing"

@@ -203,7 +203,7 @@ Run on the hardware: 8 of 8 cases as expected, 3 messages / 153 B in the journal
 | Setting | Macro | Default |
 |---|---|---|
 | enable | `S2S2_DIGI_ENABLE` | on |
-| alias besides our call (`ARISS`, empty = none) | `S2S2_DIGI_ALIAS` | `ARISS` |
+| alias besides our call (`APNDIG`, empty = none) | `S2S2_DIGI_ALIAS` | `APNDIG` |
 | answer `WIDE2-N` | `S2S2_DIGI_WIDE` | on |
 | highest N accepted | `S2S2_DIGI_MAX_N` | 2 |
 | trace (insert our call) | `S2S2_DIGI_TRACE` | on |
@@ -212,7 +212,7 @@ Run on the hardware: 8 of 8 cases as expected, 3 messages / 153 B in the journal
 | minimum time between two repeats of one station | `S2S2_DIGI_SRC_MIN_MS` | 10 s |
 | TEST: append the store statistics to the text of the frame repeated right away (`STATS` in the TUI) | `S2S2_SAF_APPEND_STATS` | off |
 
-Our call sign and SSID are the satellite's (`9N2SJ-1`). Try it from the ground station console: `DIGI K1ABC>APRS,ARISS:hello`,
+Our call sign and SSID are the satellite's (`9N2SJ-1`). Try it from the ground station console: `DIGI K1ABC>APRS,APNDIG:hello`,
 `DIGI K1ABC>APRS,WIDE2-2:!4237.14N/07120.83W-test`; the repeat appears as `K1ABC>APRS,9N2SJ-1*,WIDE2-1:...` in the GS log.
 
 ## 7. Evidence
@@ -237,7 +237,7 @@ too soon`) and the 30 s duplicate window working. The test messages were removed
 
 **Not done:** the ground-station side of the over-the-air test (see below). The ground station image with the `DIGI` command (and the new key) is built but could not be flashed (its ST-Link is
 not connected), and the receive path of the satellite for frames with a via path has been exercised only through the host chain and the on-chip rule
-self-test. Do `make flash` for both boards, then `DIGI K1ABC>APRS,ARISS:hello` on the GS console and watch for the repeat; the satellite debug UART
+self-test. Do `make flash` for both boards, then `DIGI K1ABC>APRS,APNDIG:hello` on the GS console and watch for the repeat; the satellite debug UART
 prints `[DIGI] REPEAT` / `not repeated (reason)`.
 
 ## Sources

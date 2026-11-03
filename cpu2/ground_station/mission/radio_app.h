@@ -62,6 +62,11 @@ void RadioApp_RearmRxFast(void);
 /* Transmits pure continuous unmodulated carrier on specified frequency. */
 void RadioApp_TransmitCarrier(uint32_t frequencyHz, uint32_t durationSeconds);
 
+/* Keyed carrier for the Morse transmit test (BW CWB): Begin once, Key(true/false) per mark/space, End */
+void RadioApp_CwKeyBegin(uint32_t frequencyHz);
+void RadioApp_CwKey(bool on);
+void RadioApp_CwKeyEnd(void);
+
 /* PA Selection & Power Configuration */
 void RadioApp_SetTxPower(int8_t power);
 int8_t RadioApp_GetTxPower(void);
